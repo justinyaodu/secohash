@@ -3,6 +3,8 @@
 set -eu
 cd "$(dirname "${0}")"
 
+(cd utils && make)
+
 bin='bin'
 rm -rf "${bin}"
 mkdir "${bin}"

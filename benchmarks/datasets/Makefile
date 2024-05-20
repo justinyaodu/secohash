@@ -1,4 +1,6 @@
-.PHONY: bash_builtins.txt
+.PHONY: all
+
+all: bash_builtins.txt
 
 bash_builtins.txt:
 	bash -c "compgen -bk | sort" > $@
