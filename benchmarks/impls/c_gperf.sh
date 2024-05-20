@@ -10,7 +10,6 @@ gperf_cmd=(
   --language=ANSI-C
   --struct-type
   --readonly-tables
-  --lookup-function-name=lookup
   --includes
 )
 
@@ -29,6 +28,13 @@ EOF
 done < "${1}"
 
 } | "${gperf_cmd[@]}" > "${project}/hasher.c"
+
+cat >> "${project}/hasher.c" << EOF
+uint64_t lookup(const char *str, size_t len) {
+    const struct entry* entry = in_word_set(str, len);
+    return entry == NULL ? 0 : entry->value;
+}
+EOF
 
 (cd "${project}" && GCC_FLAGS='-Wno-missing-field-initializers' make)
 

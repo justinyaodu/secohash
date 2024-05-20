@@ -13,10 +13,7 @@ int main() {
     while ((len = getline(&line, &line_size, stdin)) != -1) {
         len--;
         line[len] = '\0';
-        const struct entry* entry = lookup(line, len);
-        if (entry != NULL) {
-            total += entry->value;
-        }
+        total += lookup(line, len);
     }
     printf("%" PRIu64 "\n", total);
 }
