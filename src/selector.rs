@@ -1,6 +1,6 @@
 use crate::ir::{Instr, Ir, Reg};
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Selector {
     Len,
     Index(u32),
@@ -26,7 +26,8 @@ impl Selector {
             Selector::Table(ref t) => {
                 let t = ir.table(t.to_vec());
                 let len = ir.instr(Instr::StrLen);
-                ir.instr(Instr::Table(t, len))
+                let index = ir.instr(Instr::Table(t, len));
+                ir.instr(Instr::StrGet(index))
             }
         }
     }

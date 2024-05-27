@@ -29,77 +29,121 @@ pub fn compressor_search(
         selections.push(regs.iter().map(|r| interpreter.reg(*r)).collect())
     }
 
-    let num_selectors = regs.len();
+    let (wide_hashes, shifts) = wide_hash_search(&selections, min_hash_bits)?;
+    assert!(wide_hashes.contains(&0));
+    assert!(wide_hashes.len() == keys.non_empty_keys.len() + 1);
+    assert!(shifts.len() == regs.len());
+    let wide_hashes = wide_hashes.into_iter().collect::<Vec<_>>();
 
-    // for hash_bits in min_hash_bits..=max_hash_bits {
-    let hash_bits = max_hash_bits;
-    {
-        let final_shift = 32 - hash_bits;
-        let bound = 1u32 << (5 * num_selectors);
-        for bits in 0..bound {
-            let shifts = (0..num_selectors)
-                .map(|i| (bits >> (5 * i)) & 31)
-                .collect::<Vec<_>>();
+    let mut best_mixer = None;
+    let mut hash_bits = max_hash_bits + 1;
 
-            let mut has_collision = false;
-            let mut wide_hashes = HashSet::new();
-            wide_hashes.insert(0);
-            for selection in &selections {
-                let mut sum = 0u32;
-                for i in 0..num_selectors {
-                    sum = sum.wrapping_add(selection[i] << shifts[i]);
+    let mixer_bits = shifts.iter().map(|s| 32 - s).max().unwrap();
+    'outer: for mixer in 1..(1u64 << mixer_bits) {
+        let mixer: u32 = mixer.try_into().unwrap();
+        loop {
+            let target_hash_bits = hash_bits - 1;
+            let mut seen = vec![false; 1usize << target_hash_bits];
+
+            for wide_hash in &wide_hashes {
+                let narrow_hash = wide_hash.wrapping_mul(mixer) >> (32 - target_hash_bits);
+                if seen[narrow_hash as usize] {
+                    continue 'outer;
                 }
-                if !wide_hashes.insert(sum) {
-                    has_collision = true;
-                    break;
-                }
+                seen[narrow_hash as usize] = true;
             }
 
-            if has_collision {
-                continue;
+            best_mixer = Some(mixer);
+            hash_bits = target_hash_bits;
+            if hash_bits == min_hash_bits {
+                break 'outer;
             }
-
-            let wide_hashes = wide_hashes.into_iter().collect::<Vec<_>>();
-            for mixer in 0..(1u32 << 28) {
-                let mixer = (mixer << 1) + 1;
-                let mut narrow_hashes = HashSet::new();
-                let mut has_collision = false;
-                for wide_hash in &wide_hashes {
-                    if !narrow_hashes.insert(wide_hash.wrapping_mul(mixer) >> final_shift) {
-                        has_collision = true;
-                        break;
-                    }
-                }
-                if has_collision {
-                    continue;
-                }
-
-                let mut ir = ir.clone();
-                let shifted = regs
-                    .iter()
-                    .zip(shifts)
-                    .map(|(r, s)| {
-                        let s = ir.instr(Instr::Imm(s));
-                        ir.instr(Instr::Shll(*r, s))
-                    })
-                    .collect::<Vec<_>>();
-                let sum = shifted
-                    .into_iter()
-                    .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-                    .unwrap();
-                let mixer_reg = ir.instr(Instr::Imm(mixer));
-                let mixed = ir.instr(Instr::Mul(sum, mixer_reg));
-                let final_shift_reg = ir.instr(Instr::Imm(final_shift));
-                ir.instr(Instr::Shrl(mixed, final_shift_reg));
-
-                let table_size = ((1 << hash_bits) as usize) + 1;
-                let table = build_table(keys, &ir, table_size);
-                return Some((ir, table));
-            }
-
-            return None;
         }
     }
+
+    let mixer = best_mixer?;
+
+    let mut ir = ir.clone();
+    let shifted = regs
+        .iter()
+        .zip(shifts)
+        .map(|(r, s)| {
+            let s = ir.instr(Instr::Imm(s));
+            ir.instr(Instr::Shll(*r, s))
+        })
+        .collect::<Vec<_>>();
+    let sum = shifted
+        .into_iter()
+        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
+        .unwrap();
+
+    let mut check_table = HashSet::new();
+    for (_, key) in keys.all_keys() {
+        let hash = if key.is_empty() {
+            0
+        } else {
+            Interpreter::new(&ir).run(&key)
+        };
+        assert!(check_table.insert(hash));
+    }
+
+    let mixer_reg = ir.instr(Instr::Imm(mixer));
+    let mixed = ir.instr(Instr::Mul(sum, mixer_reg));
+    let final_shift_reg = ir.instr(Instr::Imm(32 - hash_bits));
+    ir.instr(Instr::Shrl(mixed, final_shift_reg));
+
+    let table_size = 1usize << hash_bits;
+    let table = build_table(keys, &ir, table_size);
+    Some((ir, table))
+}
+
+pub fn wide_hash_search(
+    selections: &[Vec<u32>],
+    min_hash_bits: u32,
+) -> Option<(HashSet<u32>, Vec<u32>)> {
+    let mut wide_hashes = HashSet::new();
+    wide_hashes.insert(0);
+
+    if selections.is_empty() {
+        return Some((wide_hashes, Vec::new()));
+    }
+
+    let num_selectors = selections[0].len();
+    'outer: for width in min_hash_bits..=32 {
+        let min_shift = 32 - width;
+        let mut stack: Vec<u32> = Vec::new();
+
+        'inner: loop {
+            let depth = stack.len();
+            if depth == num_selectors {
+                wide_hashes.clear();
+                wide_hashes.insert(0);
+
+                for selection in selections {
+                    let mut sum: u32 = 0;
+                    for i in 0..num_selectors {
+                        sum = sum.wrapping_add(selection[i] << stack[i]);
+                    }
+                    if !wide_hashes.insert(sum) {
+                        while stack.last() == Some(&min_shift) {
+                            stack.pop();
+                        }
+                        if stack.is_empty() {
+                            continue 'outer;
+                        }
+                        *stack.last_mut().unwrap() -= 1;
+                        continue 'inner;
+                    }
+                }
+                return Some((wide_hashes, stack));
+            } else if depth == num_selectors - 1 && !stack.contains(&min_shift) {
+                stack.push(min_shift);
+            } else {
+                stack.push(31);
+            }
+        }
+    }
+
     None
 }
 

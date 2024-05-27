@@ -1,10 +1,10 @@
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Reg(pub usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Table(pub usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Instr {
     Imm(u32),
     Table(Table, Reg),
@@ -18,7 +18,7 @@ pub enum Instr {
     Shrl(Reg, Reg),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ir {
     pub instrs: Vec<Instr>,
     pub tables: Vec<Vec<u8>>,
@@ -46,6 +46,7 @@ impl Ir {
     // TODO: dead code elimination
 }
 
+#[derive(Clone, Debug)]
 pub struct Interpreter<'a> {
     ir: &'a Ir,
     regs: Vec<u32>,
@@ -65,7 +66,8 @@ impl Interpreter<'_> {
 
     fn table(&self, Table(table): Table, reg: Reg) -> u32 {
         let index = self.reg(reg) as usize;
-        self.ir.tables[table][index].into()
+        let table = &self.ir.tables[table];
+        table[index].into()
     }
 
     pub fn run(&mut self, key: &[u32]) -> u32 {

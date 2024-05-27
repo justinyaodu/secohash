@@ -36,5 +36,5 @@ fn main() {
         compressor_search(&keys, &ir, &sel_regs, keys.num_keys() * 8).expect("compressor search failed");
 
     let c_code = CBackend::new().emit(&keys, &ir, &table);
-    println!("{}", c_code)
+    println!("{}", c_code);
 }

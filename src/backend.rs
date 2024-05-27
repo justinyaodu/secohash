@@ -1,5 +1,5 @@
 use crate::{
-    ir::{Instr, Ir, Reg},
+    ir::{Instr, Ir, Reg, Table},
     keys::Keys,
 };
 
@@ -113,12 +113,21 @@ uint32_t hash(const char *key, size_t len) {"
             );
         }
 
+        for (i, table) in ir.tables.iter().enumerate() {
+            let nums = table
+                .iter()
+                .map(|n| format!("{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
+        }
+
         for (i, instr) in ir.instrs.iter().enumerate() {
             let expr = match instr {
                 Instr::Imm(n) => format!("{n}"),
-                Instr::Table(_, _) => todo!(),
-                Instr::StrGet(Reg(i)) => format!("((uint32_t) key[r{i}])"),
-                Instr::StrLen => "((uint32_t) len)".into(),
+                Instr::Table(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
+                Instr::StrGet(Reg(i)) => format!("(uint32_t) key[r{i}]"),
+                Instr::StrLen => "(uint32_t) len".into(),
                 Instr::Add(Reg(a), Reg(b)) => format!("r{a} + r{b}"),
                 Instr::Sub(Reg(a), Reg(b)) => format!("r{a} - r{b}"),
                 Instr::Mul(Reg(a), Reg(b)) => format!("r{a} * r{b}"),
