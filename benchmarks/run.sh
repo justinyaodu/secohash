@@ -27,6 +27,7 @@ for dataset in datasets/*.txt; do
     #grep -q 'control' <<< "${impl}" && continue
     impl_name="$(basename "${impl}" .sh)"
     bench_run="${bin}/${dataset_name}__${impl_name}/run"
+    [ -f "${bench_run}" ] || continue
     hyperfine_cmd+=("${bench_run}")
   done
 

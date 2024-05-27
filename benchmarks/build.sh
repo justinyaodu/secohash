@@ -21,5 +21,9 @@ for dataset in datasets/*.txt; do
     mkdir "${bench_dir}"
 
     (cd "${bench_dir}" && bash "${impl}" "${dataset}")
+
+    if ! [ -f "${bench_dir}/run" ]; then
+      echo "build failed: ${bench_dir}"
+    fi
   done
 done

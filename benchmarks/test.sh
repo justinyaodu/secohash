@@ -19,6 +19,7 @@ for dataset in datasets/*.txt; do
     grep -q 'control' <<< "${impl}" && continue
     impl_name="$(basename "${impl}" .sh)"
     bench_run="${bin}/${dataset_name}__${impl_name}/run"
+    [ -f "${bench_run}" ] || continue
     output="${results}/${dataset_name}__${impl_name}.out"
     "${bench_run}" < "${shuffled}" > "${output}"
   done
