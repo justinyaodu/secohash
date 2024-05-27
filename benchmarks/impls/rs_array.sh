@@ -8,10 +8,10 @@ cp -a "$(dirname "${0}")/${project}" .
 {
 
 cat << EOF
-static ENTRIES: &'static [(&'static str, u64)] = &[
+static ENTRIES: &'static [(&'static str, u32)] = &[
 EOF
 
-for (( i = 1; ; i++ )); do
+for (( i = 0; ; i++ )); do
   read -r key || break
   cat << EOF
     ("${key}", ${i}),
@@ -28,7 +28,7 @@ impl Hasher {
         Self()
     }
 
-    pub fn lookup(&self, key: &str) -> u64 {
+    pub fn lookup(&self, key: &str) -> u32 {
         for &(k, v) in ENTRIES {
             if k == key {
                 return v

@@ -10,13 +10,13 @@ cp -a "$(dirname "${0}")/${project}" .
 cat << EOF
 #include <string.h>
 
-struct entry { char* name; size_t len; uint64_t value; };
+struct entry { char* name; uint32_t len; uint32_t value; };
 
-uint64_t lookup (const char *str, size_t len) {
+uint32_t lookup(const char *str, size_t len) {
     static const struct entry entries[] = {
 EOF
 
-for (( i = 1; ; i++ )); do
+for (( i = 0; ; i++ )); do
   read -r key || break
   cat << EOF
         {"${key}", ${#key}, ${i}},
@@ -31,7 +31,7 @@ cat << EOF
             return entries[i].value;
         }
     }
-    return 0;
+    return -1;
 }
 EOF
 

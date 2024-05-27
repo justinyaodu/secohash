@@ -9,11 +9,11 @@ int main() {
     char* line = NULL;
     size_t line_size = 0;
     ssize_t len;
-    uint64_t total = 0;
+    uint32_t total = 0;
     while ((len = getline(&line, &line_size, stdin)) != -1) {
         len--;
         line[len] = '\0';
         total += lookup(line, len);
     }
-    printf("%" PRIu64 "\n", total);
+    printf("%" PRIu32 "\n", total);
 }

@@ -11,16 +11,17 @@ gperf_cmd=(
   --struct-type
   --readonly-tables
   --includes
+  --slot-name=key
 )
 
 {
 
 cat << EOF
-struct entry { char* name; uint64_t value; };
+struct entry { char* key; uint32_t value; };
 %%
 EOF
 
-for (( i = 1; ; i++ )); do
+for (( i = 0; ; i++ )); do
   read -r key || break
   cat << EOF
 ${key},${i}
@@ -30,9 +31,9 @@ done < "${1}"
 } | "${gperf_cmd[@]}" > "${project}/hasher.c"
 
 cat >> "${project}/hasher.c" << EOF
-uint64_t lookup(const char *str, size_t len) {
-    const struct entry* entry = in_word_set(str, len);
-    return entry == NULL ? 0 : entry->value;
+uint32_t lookup(const char *key, size_t len) {
+    const struct entry* entry = in_word_set(key, len);
+    return entry == NULL ? ((uint32_t) -1) : entry->value;
 }
 EOF
 

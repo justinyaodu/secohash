@@ -10,14 +10,14 @@ cp -a "$(dirname "${0}")/${project}" .
 cat << EOF
 use std::collections::HashMap;
 
-pub struct Hasher(HashMap<&'static str, u64>);
+pub struct Hasher(HashMap<&'static str, u32>);
 
 impl Hasher {
     pub fn new() -> Self {
         Self(HashMap::from([
 EOF
 
-for (( i = 1; ; i++ )); do
+for (( i = 0; ; i++ )); do
   read -r key || break
   cat << EOF
             ("${key}", ${i}),
@@ -28,8 +28,8 @@ cat << EOF
         ]))
     }
 
-    pub fn lookup(&self, key: &str) -> u64 {
-        self.0.get(key).cloned().unwrap_or(0)
+    pub fn lookup(&self, key: &str) -> u32 {
+        self.0.get(key).cloned().unwrap_or(u32::MAX)
     }
 }
 EOF
