@@ -64,9 +64,13 @@ impl Backend for CBackend {
 #include <stdint.h>
 #include <string.h>
 
-struct entry { char* key; uint32_t len; uint32_t value; };
+struct entry {
+    char* key;
+    uint32_t len;
+    uint32_t value;
+};
 
-static const struct entry entries[] = {"
+const struct entry entries[] = {"
                 .into(),
         );
 

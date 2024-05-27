@@ -3,6 +3,7 @@
 set -eu
 cd "$(dirname "${0}")"
 
+(cd .. && cargo build)
 (cd utils && make)
 
 bin='bin'
@@ -20,10 +21,16 @@ for dataset in datasets/*.txt; do
     bench_dir="${bin}/${dataset_name}__${impl_name}"
     mkdir "${bench_dir}"
 
+    tput setaf 6
+    echo -e "\n######## ${bench_dir} ########\n"
+    tput sgr0
+
     (cd "${bench_dir}" && bash "${impl}" "${dataset}")
 
     if ! [ -f "${bench_dir}/run" ]; then
+      tput setaf 1
       echo "build failed: ${bench_dir}"
+      tput sgr0
     fi
   done
 done

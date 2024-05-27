@@ -12,13 +12,15 @@ pub fn compressor_search(
     max_table_size: usize,
 ) -> Option<(Ir, Vec<Option<(Vec<u32>, usize)>>)> {
     // Find the largest power of two <= max_table_size.
-    let max_table_size = {
-        let mut tmp = 1;
-        while tmp * 2 <= max_table_size {
-            tmp *= 2;
-        }
-        tmp
-    };
+    let mut max_hash_bits: u32 = 1;
+    while (1 << (max_hash_bits + 1)) <= max_table_size {
+        max_hash_bits += 1;
+    }
+
+    let mut min_hash_bits: u32 = 1;
+    while (1 << min_hash_bits) < keys.num_keys() {
+        min_hash_bits += 1;
+    }
 
     let mut selections: Vec<Vec<u32>> = Vec::new();
     for key in &keys.non_empty_keys {
@@ -28,69 +30,65 @@ pub fn compressor_search(
     }
 
     let num_selectors = regs.len();
-    let bound = 1u32 << (5 * num_selectors);
-    let mut best_mask = (max_table_size as u32) - 1;
-    let mut best_shifts: Option<Vec<u32>> = None;
-    for bits in 0..bound {
-        let shifts = (0..num_selectors)
-            .map(|i| (bits >> (5 * i)) & 31)
-            .collect::<Vec<_>>();
 
-        let mut has_collision = false;
-        let mut seen = HashSet::new();
-        seen.insert(0);
-        for selection in &selections {
-            let mut sum = 0u32;
-            for i in 0..num_selectors {
-                sum = sum.wrapping_add(selection[i] << shifts[i]);
-            }
-            if !seen.insert(sum & best_mask) {
-                has_collision = true;
-                break;
+    for hash_bits in min_hash_bits..=max_hash_bits {
+        let final_shift = 32 - hash_bits;
+        for mix_shift in 0..32 {
+            let bound = 1u32 << (5 * num_selectors);
+            for bits in 0..bound {
+                let shifts = (0..num_selectors)
+                    .map(|i| (bits >> (5 * i)) & 31)
+                    .collect::<Vec<_>>();
+
+                let mut has_collision = false;
+                let mut seen = HashSet::new();
+                seen.insert(0);
+                for selection in &selections {
+                    let mut sum = 0u32;
+                    for i in 0..num_selectors {
+                        sum = sum.wrapping_add(selection[i] << shifts[i]);
+                    }
+                    if mix_shift != 0 {
+                        sum = sum.wrapping_add(sum << mix_shift);
+                    }
+                    if !seen.insert(sum >> final_shift) {
+                        has_collision = true;
+                        break;
+                    }
+                }
+
+                if has_collision {
+                    continue;
+                }
+
+                let mut ir = ir.clone();
+                let shifted = regs
+                    .iter()
+                    .zip(shifts)
+                    .map(|(r, s)| {
+                        let s = ir.instr(Instr::Imm(s));
+                        ir.instr(Instr::Shll(*r, s))
+                    })
+                    .collect::<Vec<_>>();
+                let sum = shifted
+                    .into_iter()
+                    .reduce(|a, b| ir.instr(Instr::Add(a, b)))
+                    .unwrap();
+                let mixed = if mix_shift == 0 { sum } else {
+                    let mix_shift_reg = ir.instr(Instr::Imm(mix_shift));
+                    let shifted_sum = ir.instr(Instr::Shll(sum, mix_shift_reg));
+                    ir.instr(Instr::Add(sum, shifted_sum))
+                };
+                let final_shift_reg = ir.instr(Instr::Imm(final_shift));
+                ir.instr(Instr::Shrl(mixed, final_shift_reg));
+
+                let table_size = ((1 << hash_bits) as usize) + 1;
+                let table = build_table(keys, &ir, table_size);
+                return Some((ir, table))
             }
         }
-
-        if has_collision {
-            continue;
-        }
-
-        while best_mask > 0 {
-            let next_mask = best_mask >> 1;
-            let next_seen = seen
-                .iter()
-                .map(|sum| sum & next_mask)
-                .collect::<HashSet<_>>();
-            if next_seen.len() < seen.len() {
-                break;
-            }
-            best_mask = next_mask;
-            seen = next_seen;
-        }
-
-        best_shifts = Some(shifts);
     }
-
-    let best_shifts = best_shifts?;
-
-    let mut ir = ir.clone();
-    let shifted = regs
-        .iter()
-        .zip(best_shifts)
-        .map(|(r, s)| {
-            let s = ir.instr(Instr::Imm(s));
-            ir.instr(Instr::Shll(*r, s))
-        })
-        .collect::<Vec<_>>();
-    let sum = shifted
-        .into_iter()
-        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-        .unwrap();
-    let mask = ir.instr(Instr::Imm(best_mask));
-    ir.instr(Instr::And(sum, mask));
-
-    let table_size = (best_mask as usize) + 1;
-    let table = build_table(keys, &ir, table_size);
-    Some((ir, table))
+    None
 }
 
 fn build_table(keys: &Keys, ir: &Ir, table_size: usize) -> Vec<Option<(Vec<u32>, usize)>> {
