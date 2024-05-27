@@ -11,8 +11,9 @@ pub enum Instr {
     StrGet(Reg),
     StrLen,
     Add(Reg, Reg),
-    And(Reg, Reg),
     Sub(Reg, Reg),
+    Mul(Reg, Reg),
+    And(Reg, Reg),
     Shll(Reg, Reg),
     Shrl(Reg, Reg),
 }
@@ -76,6 +77,7 @@ impl Interpreter<'_> {
                 Instr::StrLen => key.len() as u32,
                 Instr::Add(a, b) => self.reg(a).wrapping_add(self.reg(b)),
                 Instr::Sub(a, b) => self.reg(a).wrapping_sub(self.reg(b)),
+                Instr::Mul(a, b) => self.reg(a).wrapping_mul(self.reg(b)),
                 Instr::And(a, b) => self.reg(a) & self.reg(b),
                 Instr::Shll(a, b) => self.reg(a) << self.reg(b),
                 Instr::Shrl(a, b) => self.reg(a) >> self.reg(b),

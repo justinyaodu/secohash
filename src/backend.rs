@@ -121,6 +121,7 @@ uint32_t hash(const char *key, size_t len) {"
                 Instr::StrLen => "((uint32_t) len)".into(),
                 Instr::Add(Reg(a), Reg(b)) => format!("r{a} + r{b}"),
                 Instr::Sub(Reg(a), Reg(b)) => format!("r{a} - r{b}"),
+                Instr::Mul(Reg(a), Reg(b)) => format!("r{a} * r{b}"),
                 Instr::And(Reg(a), Reg(b)) => format!("r{a} & r{b}"),
                 Instr::Shll(Reg(a), Reg(b)) => format!("r{a} << r{b}"),
                 Instr::Shrl(Reg(a), Reg(b)) => format!("r{a} >> r{b}"),

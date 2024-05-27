@@ -40,4 +40,4 @@ EOF
 (cd "${project}" && GCC_FLAGS='-Wno-unused-parameter' make)
 
 mv "${project}/run" run
-rm -r "${project}"
+#rm -r "${project}"
