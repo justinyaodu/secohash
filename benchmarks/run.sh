@@ -12,6 +12,9 @@ mkdir "${results}"
 
 for dataset in datasets/*.txt; do
   dataset_name="$(basename "${dataset}" .txt)"
+
+  grep -q "${2:-}" <<< "${dataset_name}" || continue
+
   shuffled="${results}/${dataset_name}_${n}.txt"
   utils/bin/shuffler "${n}" < "${dataset}" > "${shuffled}"
 

@@ -21,12 +21,12 @@ pub fn compressor_search(
         end_hash_bits += 1;
     }
 
-    let (ir, wide_hash_bits) = wide_hash_search(keys, ir, sel_regs, start_hash_bits)?;
+    let (ir, hash_bits) = wide_hash_search(keys, ir, sel_regs, start_hash_bits)?;
 
-    let (ir, hash_bits) = if wide_hash_bits < end_hash_bits {
-        (ir, wide_hash_bits)
+    let (ir, hash_bits) = if hash_bits < end_hash_bits {
+        (ir, hash_bits)
     } else {
-        xor_table_search(keys, &ir, wide_hash_bits, start_hash_bits, end_hash_bits)?
+        xor_table_search(keys, &ir, hash_bits, start_hash_bits)?
     };
 
     let table = build_table(keys, &ir, 1 << hash_bits);
@@ -120,68 +120,84 @@ fn compile_wide_hash(
 pub fn xor_table_search(
     keys: &Keys,
     ir: &Ir,
-    wide_hash_bits: u32,
+    cur_hash_bits: u32,
     start_hash_bits: u32,
-    end_hash_bits: u32,
 ) -> Option<(Ir, u32)> {
-    let wide_hashes = keys
+    let hashes = keys
         .non_empty_keys
         .iter()
         .map(|key| Interpreter::new(ir).run(key))
         .collect::<Vec<_>>();
 
-    'outer: for hash_bits in start_hash_bits..end_hash_bits {
-        let low_bits = wide_hash_bits - hash_bits;
-        let mut groups = vec![Vec::new(); 1 << low_bits];
-        for wide_hash in &wide_hashes {
-            groups[(wide_hash & ((1 << low_bits) - 1)) as usize].push(wide_hash >> low_bits);
-        }
-        let mut groups = groups.into_iter().enumerate().collect::<Vec<_>>();
-        groups.sort_by_key(|p| p.1.len());
-        groups.reverse();
+    for hash_bits in start_hash_bits..cur_hash_bits {
+        let hash_shift = cur_hash_bits - hash_bits;
+        'outer: for table_index_bits in 0..start_hash_bits {
+            let table_size = 1usize << table_index_bits;
+            let index_mask = (1 << table_index_bits) - 1;
 
-        let mut seen = vec![false; 1 << hash_bits];
-        seen[0] = true;
-        let mut xor_table = vec![0u8; 1 << low_bits];
-
-        for (i, group) in groups {
-            let mut good_xor: Option<u32> = None;
-            'inner: for xor in 0..u32::min(256, 1 << hash_bits) {
-                for index in &group {
-                    if seen[(index ^ xor) as usize] {
-                        continue 'inner;
-                    }
+            let mut groups = vec![HashSet::new(); table_size];
+            for hash in &hashes {
+                if !groups[(hash & index_mask) as usize].insert(hash >> hash_shift) {
+                    continue 'outer;
                 }
-                good_xor = Some(xor);
-                break;
             }
 
-            let Some(shuffle) = good_xor else {
-                continue 'outer;
-            };
+            let mut groups = groups
+                .into_iter()
+                .map(|set| set.into_iter().collect::<Vec<_>>())
+                .enumerate()
+                .collect::<Vec<_>>();
+            groups.sort_by_key(|p| p.1.len());
+            groups.reverse();
 
-            for index in &group {
-                seen[(index ^ shuffle) as usize] = true;
+            let mut seen = vec![false; 1 << hash_bits];
+            seen[0] = true;
+            let mut xor_table = vec![0u8; table_size];
+
+            for (i, group) in groups {
+                let mut good_xor: Option<u32> = None;
+                'inner: for xor in 0..u32::min(256, 1 << hash_bits) {
+                    for index in &group {
+                        if seen[(index ^ xor) as usize] {
+                            continue 'inner;
+                        }
+                    }
+                    good_xor = Some(xor);
+                    break;
+                }
+
+                let Some(xor) = good_xor else {
+                    continue 'outer;
+                };
+
+                for index in &group {
+                    seen[(index ^ xor) as usize] = true;
+                }
+                xor_table[i] = xor.try_into().unwrap();
             }
-            xor_table[i] = shuffle.try_into().unwrap();
+
+            return Some((
+                compile_xor_table(keys, ir, xor_table, hash_shift),
+                hash_bits,
+            ));
         }
-
-        return Some((compile_xor_table(keys, ir, xor_table, low_bits), hash_bits));
     }
 
     None
 }
 
-fn compile_xor_table(keys: &Keys, ir: &Ir, xor_table: Vec<u8>, low_bits: u32) -> Ir {
-    let wide_hash_reg = ir.last_reg();
+fn compile_xor_table(keys: &Keys, ir: &Ir, xor_table: Vec<u8>, hash_shift: u32) -> Ir {
+    let index_mask = (xor_table.len() - 1).try_into().unwrap();
+    let hash = ir.last_reg();
+
     let mut ir = ir.clone();
     let xor_table = ir.table(xor_table);
-    let shuffle_mask = ir.instr(Instr::Imm((1 << low_bits) - 1));
-    let shuffle_index = ir.instr(Instr::And(wide_hash_reg, shuffle_mask));
-    let shuffle_value = ir.instr(Instr::Table(xor_table, shuffle_index));
-    let right_shift_amount = ir.instr(Instr::Imm(low_bits));
-    let shifted_wide_hash = ir.instr(Instr::Shrl(wide_hash_reg, right_shift_amount));
-    let hash = ir.instr(Instr::Xor(shifted_wide_hash, shuffle_value));
+    let index_mask = ir.instr(Instr::Imm(index_mask));
+    let masked_index = ir.instr(Instr::And(hash, index_mask));
+    let xor_table_value = ir.instr(Instr::Table(xor_table, masked_index));
+    let hash_shift = ir.instr(Instr::Imm(hash_shift));
+    let shifted_hash = ir.instr(Instr::Shrl(hash, hash_shift));
+    let hash = ir.instr(Instr::Xor(shifted_hash, xor_table_value));
     ir.assert_distinguishes(keys, &[hash]);
     ir
 }
