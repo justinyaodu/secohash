@@ -31,6 +31,7 @@ fn main() {
 
     let mut ir = Ir::new();
     let sel_regs: Vec<Reg> = sels.iter().map(|s| s.compile(&mut ir)).collect();
+    ir.assert_distinguishes(&keys, &sel_regs);
 
     let (ir, table) =
         compressor_search(&keys, &ir, &sel_regs, keys.num_keys() * 4).expect("compressor search failed");

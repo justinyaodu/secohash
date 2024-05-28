@@ -1,3 +1,7 @@
+use std::collections::HashSet;
+
+use crate::keys::Keys;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Reg(pub usize);
 
@@ -41,6 +45,15 @@ impl Ir {
     pub fn table(&mut self, table: Vec<u8>) -> Table {
         self.tables.push(table);
         Table(self.tables.len() - 1)
+    }
+
+    pub fn assert_distinguishes(&self, keys: &Keys, regs: &[Reg]) {
+        let mut hashes = HashSet::new();
+        for key in &keys.non_empty_keys {
+            let mut interpreter = Interpreter::new(self);
+            interpreter.run(key);
+            assert!(hashes.insert(regs.iter().map(|&r| interpreter.reg(r)).collect::<Vec<_>>()));
+        }
     }
 
     // TODO: common subexpression elimination
