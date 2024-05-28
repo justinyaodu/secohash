@@ -47,6 +47,10 @@ impl Ir {
         Table(self.tables.len() - 1)
     }
 
+    pub fn last_reg(&self) -> Reg {
+        Reg(self.instrs.len() - 1)
+    }
+
     pub fn assert_distinguishes(&self, keys: &Keys, regs: &[Reg]) {
         let mut hashes = HashSet::new();
         for key in &keys.non_empty_keys {
