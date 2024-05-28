@@ -14,6 +14,7 @@ pub enum Instr {
     Sub(Reg, Reg),
     Mul(Reg, Reg),
     And(Reg, Reg),
+    Xor(Reg, Reg),
     Shll(Reg, Reg),
     Shrl(Reg, Reg),
 }
@@ -81,6 +82,7 @@ impl Interpreter<'_> {
                 Instr::Sub(a, b) => self.reg(a).wrapping_sub(self.reg(b)),
                 Instr::Mul(a, b) => self.reg(a).wrapping_mul(self.reg(b)),
                 Instr::And(a, b) => self.reg(a) & self.reg(b),
+                Instr::Xor(a, b) => self.reg(a) ^ self.reg(b),
                 Instr::Shll(a, b) => self.reg(a) << self.reg(b),
                 Instr::Shrl(a, b) => self.reg(a) >> self.reg(b),
             });
