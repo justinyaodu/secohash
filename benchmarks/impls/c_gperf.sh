@@ -10,6 +10,7 @@ gperf_cmd=(
   --language=ANSI-C
   --struct-type
   --readonly-tables
+  --compare-lengths
   --includes
   --slot-name=key
 )
