@@ -84,17 +84,10 @@ const struct entry entries[] = {"
                 }
                 None => {
                     if i == 0 {
-                        // TODO: this is probably broken
-                        // length must be in [start_len, end_len) so it never equals
-                        // a key with incorrect length
-                        // and its hash value must be non-zero so we never get this
-                        // key back if we look it up
-                        // also need to fudge start_len and end_len to include fake key
-                        // if we have an empty set, otherwise we will always return 0
-                        // (even for the fake key)
-                        let len = keys.end_len;
-                        let fake_key = "q".repeat(len);
-                        format!("{{ \"{fake_key}\", {len}, -1 }}")
+                        let key = &table.iter().find_map(|s| s.as_ref()).unwrap().0;
+                        let string_literal = self.string_literal(key);
+                        let len = key.len();
+                        format!("{{ {string_literal}, {len}, -1 }}")
                     } else {
                         "{ \"\", 0, -1 }".into()
                     }
