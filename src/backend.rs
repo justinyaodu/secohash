@@ -44,7 +44,8 @@ impl CBackend {
     }
 
     fn string_literal(&self, key: &[u32]) -> String {
-        let mut s: String = "\"".into();
+        let mut s = String::new();
+        s.push('"');
         for c in key.iter().copied() {
             assert!(c < 256);
             s.push_str(&self.char_escape_table[c as usize])

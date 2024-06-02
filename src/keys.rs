@@ -24,13 +24,13 @@ impl Keys {
             }
         }
 
-        let start_len = non_empty_keys.iter().map(Vec::len).min().unwrap_or(0);
+        let start_len = non_empty_keys.iter().map(Vec::len).min().unwrap_or(1);
         let end_len = non_empty_keys
             .iter()
             .map(Vec::len)
             .max()
             .map(|n| n + 1)
-            .unwrap_or(0);
+            .unwrap_or(1);
 
         Keys {
             non_empty_keys,

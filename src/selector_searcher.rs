@@ -9,6 +9,18 @@ pub fn selector_search(keys: &Keys) -> Option<Vec<Selector>> {
         for i in 0..keys.start_len {
             selectors.push(Selector::Index(i as u32));
         }
+        for i in 1..=keys.start_len {
+            selectors.push(Selector::Sub(i as u32));
+        }
+        for i in 0..keys.start_len {
+            selectors.push(Selector::And(i as u32));
+        }
+        for i in 1.. {
+            if ((keys.end_len - 1) >> i) == 0 {
+                break;
+            }
+            selectors.push(Selector::Shrl(i as u32));
+        }
 
         for choices in 1..4 {
             let opt = search_rec(&keys.non_empty_keys, &selectors, Vec::new(), choices);
