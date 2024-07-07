@@ -51,7 +51,7 @@ impl Keys {
                 let key = match i.cmp(&empty_key_ordinal) {
                     Ordering::Less => self.non_empty_keys[i].clone(),
                     Ordering::Equal => Vec::new(),
-                    Ordering::Greater => self.non_empty_keys[i - 1].clone()
+                    Ordering::Greater => self.non_empty_keys[i - 1].clone(),
                 };
                 (i, key)
             })

@@ -1,15 +1,17 @@
 mod backend;
+mod comb;
 mod compressor_searcher;
 mod ir;
 mod keys;
 mod selector;
 mod selector_searcher;
+mod shift_gen;
 
 use std::io;
 use std::io::BufRead;
 
 use backend::{Backend, CBackend};
-use compressor_searcher::compressor_search;
+use compressor_searcher::{compressor_search, Phf};
 use ir::{Ir, Reg};
 use keys::Keys;
 use selector_searcher::selector_search;
@@ -31,11 +33,11 @@ fn main() {
 
     let mut ir = Ir::new();
     let sel_regs: Vec<Reg> = sels.iter().map(|s| s.compile(&mut ir)).collect();
-    ir.assert_distinguishes(&keys, &sel_regs);
+    assert!(ir.distinguishes(&keys, &sel_regs));
 
-    let (ir, table) =
-        compressor_search(&keys, &ir, &sel_regs, keys.num_keys() * 4).expect("compressor search failed");
+    let Phf { ir, hash_table } = compressor_search(&keys, &ir, &sel_regs, keys.num_keys() * 4)
+        .expect("compressor search failed");
 
-    let c_code = CBackend::new().emit(&keys, &ir, &table);
+    let c_code = CBackend::new().emit(&keys, &ir, &hash_table);
     println!("{}", c_code);
 }

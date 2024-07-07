@@ -3,14 +3,371 @@ use std::collections::HashSet;
 use crate::{
     ir::{Instr, Interpreter, Ir, Reg},
     keys::Keys,
+    shift_gen::ShiftGen,
 };
+
+fn table_size(index_bits: u32) -> usize {
+    1 << index_bits
+}
+
+fn table_index_mask(index_bits: u32) -> u32 {
+    (table_size(index_bits) - 1) as u32
+}
+
+fn no_offset_search(
+    ir: &Ir,
+    interpreters: &[Interpreter],
+    sel_regs: &[Reg],
+    hash_bits: u32,
+) -> Option<Ir> {
+    for num_nonzero_shifts in 0..(sel_regs.len() as u32) {
+        let mut shift_gen = ShiftGen::new(sel_regs.len() as u32, num_nonzero_shifts, hash_bits - 1);
+
+        loop {
+            let sol = no_offset_search_2(ir, interpreters, sel_regs, hash_bits, &shift_gen.shifts);
+            if sol.is_some() {
+                return sol;
+            }
+
+            if !shift_gen.next() {
+                break;
+            }
+        }
+    }
+
+    None
+}
+
+fn no_offset_search_2(
+    ir: &Ir,
+    interpreters: &[Interpreter],
+    sel_regs: &[Reg],
+    hash_bits: u32,
+    shifts: &[u32],
+) -> Option<Ir> {
+    assert!(sel_regs.len() == shifts.len());
+
+    let mut seen = vec![false; table_size(hash_bits)];
+    for interpreter in interpreters {
+        let mut hash = 0u32;
+        for i in 0..sel_regs.len() {
+            hash = hash.wrapping_add(interpreter.reg(sel_regs[i]) << shifts[i]);
+        }
+        hash &= table_index_mask(hash_bits);
+        if seen[hash as usize] {
+            return None;
+        }
+        seen[hash as usize] = true;
+    }
+
+    let mut ir = ir.clone();
+    let shifted_regs = sel_regs
+        .iter()
+        .zip(shifts)
+        .map(|(&sel_reg, &shift)| {
+            if shift == 0 {
+                sel_reg
+            } else {
+                let shift_amount = ir.instr(Instr::Imm(shift));
+                ir.instr(Instr::Shll(sel_reg, shift_amount))
+            }
+        })
+        .collect::<Vec<_>>();
+    let unmasked_hash = shifted_regs
+        .into_iter()
+        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
+        .unwrap();
+    let hash_mask = ir.instr(Instr::Imm(table_index_mask(hash_bits)));
+    ir.instr(Instr::And(unmasked_hash, hash_mask));
+    Some(ir)
+}
+
+fn unmixed_offset_search(
+    ir: &Ir,
+    interpreters: &[Interpreter],
+    sel_regs: &[Reg],
+    hash_bits: u32,
+) -> Option<Ir> {
+    let num_base_sels = (sel_regs.len() - 1) as u32;
+    for offset_index_bits in 1..=hash_bits {
+        for index_sel_index in 0..sel_regs.len() {
+            for num_nonzero_shifts in 0..num_base_sels {
+                let mut base_sel_regs = sel_regs.to_vec();
+                let offset_index_sel_reg = base_sel_regs.remove(index_sel_index);
+
+                let mut shift_gen = ShiftGen::new(num_base_sels, num_nonzero_shifts, hash_bits - 1);
+
+                loop {
+                    let sol = unmixed_offset_search_2(
+                        ir,
+                        interpreters,
+                        &base_sel_regs,
+                        hash_bits,
+                        &shift_gen.shifts,
+                        offset_index_sel_reg,
+                        offset_index_bits,
+                    );
+                    if sol.is_some() {
+                        return sol;
+                    }
+
+                    if !shift_gen.next() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn unmixed_offset_search_2(
+    ir: &Ir,
+    interpreters: &[Interpreter],
+    base_sel_regs: &[Reg],
+    hash_bits: u32,
+    shifts: &[u32],
+    offset_index_sel_reg: Reg,
+    offset_index_bits: u32,
+) -> Option<Ir> {
+    let bases: Vec<u32> = interpreters
+        .iter()
+        .map(|interpreter| {
+            let mut direct_value = 0u32;
+            for i in 0..base_sel_regs.len() {
+                direct_value =
+                    direct_value.wrapping_add(interpreter.reg(base_sel_regs[i]) << shifts[i]);
+            }
+            direct_value
+        })
+        .collect();
+
+    let offset_indices: Vec<u32> = interpreters
+        .iter()
+        .map(|interpreter| interpreter.reg(offset_index_sel_reg))
+        .collect();
+
+    let table = offset_table_search(&bases, &offset_indices, offset_index_bits, hash_bits);
+    let table = table?;
+
+    let mut ir = ir.clone();
+    let table = ir.table(table);
+
+    let shifted_regs = base_sel_regs
+        .iter()
+        .zip(shifts)
+        .map(|(&sel_reg, &shift)| {
+            if shift == 0 {
+                sel_reg
+            } else {
+                let shift_amount = ir.instr(Instr::Imm(shift));
+                ir.instr(Instr::Shll(sel_reg, shift_amount))
+            }
+        })
+        .collect::<Vec<_>>();
+    let base_reg = shifted_regs
+        .into_iter()
+        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
+        .unwrap();
+
+    let offset_index_mask = ir.instr(Instr::Imm(table_index_mask(offset_index_bits)));
+    let offset_index = ir.instr(Instr::And(offset_index_sel_reg, offset_index_mask));
+    let offset = ir.instr(Instr::Table(table, offset_index));
+    let unmasked_hash = ir.instr(Instr::Add(base_reg, offset));
+    let hash_mask = ir.instr(Instr::Imm(table_index_mask(hash_bits)));
+    ir.instr(Instr::And(unmasked_hash, hash_mask));
+    Some(ir)
+}
+
+fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option<Ir> {
+    let mut mask = !0;
+    let mut sol_shifts = None;
+
+    'shifts: for packed_shifts in 0..(1u64 << (5 * sel_regs.len())) {
+        let shifts: Vec<u32> = (0..sel_regs.len())
+            .map(|i| ((packed_shifts >> (5 * i)) & 31) as u32)
+            .collect();
+
+        loop {
+            let mut mixes = HashSet::new();
+            for interpreter in interpreters {
+                let mut mix = 0u32;
+                for (&sel_reg, &shift) in sel_regs.iter().zip(shifts.iter()) {
+                    mix = mix.wrapping_add(interpreter.reg(sel_reg) << shift);
+                }
+                mix &= mask;
+
+                if !mixes.insert(mix) {
+                    continue 'shifts;
+                }
+            }
+
+            sol_shifts = Some(shifts.clone());
+            mask >>= 1;
+            if mask == 0 {
+                break 'shifts;
+            }
+        }
+    }
+
+    match sol_shifts {
+        Some(shifts) => {
+            let mut ir = ir.clone();
+            let shifted_regs = sel_regs
+                .iter()
+                .zip(shifts)
+                .map(|(&sel, left_shift)| {
+                    let left_shift = ir.instr(Instr::Imm(left_shift));
+                    ir.instr(Instr::Shll(sel, left_shift))
+                })
+                .collect::<Vec<_>>();
+            shifted_regs
+                .into_iter()
+                .reduce(|a, b| ir.instr(Instr::Add(a, b)))
+                .unwrap();
+            Some(ir)
+        }
+        None => None,
+    }
+}
+
+fn mixed_offset_search(
+    keys: &Keys,
+    ir: &Ir,
+    interpreters: &[Interpreter],
+    sel_regs: &[Reg],
+    hash_bits: u32,
+) -> Option<Ir> {
+    let ir = mix_search(ir, interpreters, sel_regs);
+    let ir = ir?;
+    let interpreters = ir.run_all(keys);
+
+    let mix_reg = ir.last_reg();
+    for offset_index_bits in 1..=hash_bits {
+        let offset_index_mask = table_index_mask(offset_index_bits);
+        for base_shift in 0..32 {
+            let bases: Vec<u32> = interpreters
+                .iter()
+                .map(|interpreter| interpreter.reg(mix_reg) >> base_shift)
+                .collect();
+
+            let offset_indices: Vec<u32> = interpreters
+                .iter()
+                .map(|interpreter| interpreter.reg(mix_reg) & offset_index_mask)
+                .collect();
+
+            let Some(offset_table) =
+                offset_table_search(&bases, &offset_indices, offset_index_bits, hash_bits)
+            else {
+                continue;
+            };
+
+            let mut ir = ir.clone();
+            let offset_table = ir.table(offset_table);
+            let base_shift_reg = ir.instr(Instr::Imm(base_shift));
+            let base_reg = ir.instr(Instr::Shrl(mix_reg, base_shift_reg));
+            let offset_index_mask_reg = ir.instr(Instr::Imm(offset_index_mask));
+            let offset_index_reg = ir.instr(Instr::And(mix_reg, offset_index_mask_reg));
+            let offset_reg = ir.instr(Instr::Table(offset_table, offset_index_reg));
+            let unmasked_hash_reg = ir.instr(Instr::Add(base_reg, offset_reg));
+            let hash_mask_reg = ir.instr(Instr::Imm(table_index_mask(hash_bits)));
+            ir.instr(Instr::And(unmasked_hash_reg, hash_mask_reg));
+            return Some(ir);
+        }
+    }
+
+    None
+}
+
+fn offset_table_search(
+    bases: &[u32],
+    offset_indices: &[u32],
+    offset_index_bits: u32,
+    hash_bits: u32,
+) -> Option<Vec<u8>> {
+    assert!(bases.len() == offset_indices.len());
+
+    let offset_table_size = table_size(offset_index_bits);
+    let offset_table_index_mask = table_index_mask(offset_index_bits);
+
+    let mut groups = vec![Vec::new(); offset_table_size];
+    for (&base, &index) in bases.iter().zip(offset_indices) {
+        groups[(index & offset_table_index_mask) as usize].push(base);
+    }
+
+    let mut groups_and_indices = Vec::new();
+    for (index, group) in groups.into_iter().enumerate() {
+        if !group.is_empty() {
+            groups_and_indices.push((group, index));
+        }
+    }
+    groups_and_indices.sort_by_key(|p| p.0.len());
+    groups_and_indices.reverse();
+
+    let hash_table_size = table_size(hash_bits);
+    let hash_mask = table_index_mask(hash_bits);
+    let mut seen = vec![false; hash_table_size];
+    seen[0] = true;
+
+    let mut offset_table: Vec<u8> = vec![0; offset_table_size];
+    let offset_size = usize::min(hash_table_size, 128) as u8;
+    'group: for (group, index) in groups_and_indices {
+        'offset: for offset in 0..offset_size {
+            for &base in &group {
+                let hash = (base.wrapping_add(offset.into()) & hash_mask) as usize;
+                if seen[hash] {
+                    continue 'offset;
+                }
+            }
+
+            for &base in &group {
+                let hash = (base.wrapping_add(offset.into()) & hash_mask) as usize;
+                if seen[hash] {
+                    // Keys cannot be distinguished from base and masked index.
+                    return None;
+                }
+                seen[hash] = true;
+            }
+            offset_table[index] = offset;
+            continue 'group;
+        }
+
+        // No table value will resolve the conflicts for this group.
+        return None;
+    }
+
+    Some(offset_table)
+}
+
+pub struct Phf {
+    pub ir: Ir,
+    pub hash_table: Vec<Option<(Vec<u32>, usize)>>,
+}
+
+impl Phf {
+    fn new(keys: &Keys, ir: Ir, hash_bits: u32) -> Phf {
+        let mut hash_table: Vec<Option<(Vec<u32>, usize)>> = vec![None; table_size(hash_bits)];
+        for (i, key) in keys.all_keys() {
+            let index = if key.is_empty() {
+                0
+            } else {
+                Interpreter::new().run(&ir, &key) as usize
+            };
+            assert!(hash_table[index].is_none());
+            hash_table[index] = Some((key, i));
+        }
+
+        Phf { ir, hash_table }
+    }
+}
 
 pub fn compressor_search(
     keys: &Keys,
     ir: &Ir,
     sel_regs: &[Reg],
     max_table_size: usize,
-) -> Option<(Ir, Vec<Option<(Vec<u32>, usize)>>)> {
+) -> Option<Phf> {
     let mut start_hash_bits: u32 = 1;
     while (1 << start_hash_bits) < keys.num_keys() {
         start_hash_bits += 1;
@@ -21,198 +378,19 @@ pub fn compressor_search(
         end_hash_bits += 1;
     }
 
-    let (ir, hash_bits) = wide_hash_search(keys, ir, sel_regs, start_hash_bits)?;
+    let interpreters = ir.run_all(keys);
 
-    let (ir, hash_bits) = if hash_bits < end_hash_bits {
-        (ir, hash_bits)
-    } else {
-        xor_table_search(keys, &ir, hash_bits, start_hash_bits)?
-    };
-
-    let table = build_table(keys, &ir, 1 << hash_bits);
-    Some((ir, table))
-}
-
-pub fn wide_hash_search(
-    keys: &Keys,
-    ir: &Ir,
-    sel_regs: &[Reg],
-    start_hash_bits: u32,
-) -> Option<(Ir, u32)> {
-    let mut selections: Vec<Vec<u32>> = Vec::new();
-    for key in &keys.non_empty_keys {
-        let mut interpreter = Interpreter::new(ir);
-        interpreter.run(key);
-        selections.push(sel_regs.iter().map(|&r| interpreter.reg(r)).collect())
-    }
-
-    let mut wide_hashes = HashSet::new();
-
-    // TODO: handle no non-empty keys
-
-    let num_selectors = selections[0].len();
-    'outer: for wide_hash_bits in start_hash_bits..=32 {
-        let min_shift = 32 - wide_hash_bits;
-        let mut stack: Vec<u32> = Vec::new();
-
-        'inner: loop {
-            let depth = stack.len();
-            if depth == num_selectors {
-                wide_hashes.clear();
-
-                for selection in &selections {
-                    let mut sum: u32 = 0;
-                    for i in 0..num_selectors {
-                        sum = sum.wrapping_add(selection[i] << stack[i]);
-                    }
-                    if !wide_hashes.insert(sum) {
-                        while stack.last() == Some(&min_shift) {
-                            stack.pop();
-                        }
-                        if stack.is_empty() {
-                            continue 'outer;
-                        }
-                        *stack.last_mut().unwrap() -= 1;
-                        continue 'inner;
-                    }
-                }
-
-                let ir = compile_wide_hash(keys, ir, sel_regs, &stack, wide_hash_bits);
-                return Some((ir, wide_hash_bits));
-            } else if depth == num_selectors - 1 && !stack.contains(&min_shift) {
-                stack.push(min_shift);
-            } else {
-                stack.push(31);
-            }
+    for hash_bits in start_hash_bits..end_hash_bits {
+        if let Some(ir) = no_offset_search(ir, &interpreters, sel_regs, hash_bits) {
+            return Some(Phf::new(keys, ir, hash_bits));
+        }
+        if let Some(ir) = unmixed_offset_search(ir, &interpreters, sel_regs, hash_bits) {
+            return Some(Phf::new(keys, ir, hash_bits));
+        }
+        if let Some(ir) = mixed_offset_search(keys, ir, &interpreters, sel_regs, hash_bits) {
+            return Some(Phf::new(keys, ir, hash_bits));
         }
     }
 
     None
-}
-
-fn compile_wide_hash(
-    keys: &Keys,
-    ir: &Ir,
-    sel_regs: &[Reg],
-    left_shifts: &[u32],
-    wide_hash_bits: u32,
-) -> Ir {
-    let mut ir = ir.clone();
-    let shifted = sel_regs
-        .iter()
-        .zip(left_shifts)
-        .map(|(&r, &s)| {
-            let s = ir.instr(Instr::Imm(s));
-            ir.instr(Instr::Shll(r, s))
-        })
-        .collect::<Vec<_>>();
-    let sum = shifted
-        .into_iter()
-        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-        .unwrap();
-    let right_shift_amount = ir.instr(Instr::Imm(32 - wide_hash_bits));
-    let wide_hash = ir.instr(Instr::Shrl(sum, right_shift_amount));
-
-    ir.assert_distinguishes(keys, &[wide_hash]);
-    ir
-}
-
-pub fn xor_table_search(
-    keys: &Keys,
-    ir: &Ir,
-    cur_hash_bits: u32,
-    start_hash_bits: u32,
-) -> Option<(Ir, u32)> {
-    let hashes = keys
-        .non_empty_keys
-        .iter()
-        .map(|key| Interpreter::new(ir).run(key))
-        .collect::<Vec<_>>();
-
-    for hash_bits in start_hash_bits..cur_hash_bits {
-        let hash_shift = cur_hash_bits - hash_bits;
-        'outer: for table_index_bits in 0..start_hash_bits {
-            let table_size = 1usize << table_index_bits;
-            let index_mask = (1 << table_index_bits) - 1;
-
-            let mut groups = vec![HashSet::new(); table_size];
-            for hash in &hashes {
-                if !groups[(hash & index_mask) as usize].insert(hash >> hash_shift) {
-                    continue 'outer;
-                }
-            }
-
-            let mut groups = groups
-                .into_iter()
-                .map(|set| set.into_iter().collect::<Vec<_>>())
-                .enumerate()
-                .collect::<Vec<_>>();
-            groups.sort_by_key(|p| p.1.len());
-            groups.reverse();
-
-            let mut seen = vec![false; 1 << hash_bits];
-            seen[0] = true;
-            let mut xor_table = vec![0u8; table_size];
-
-            for (i, group) in groups {
-                let mut good_xor: Option<u32> = None;
-                'inner: for xor in 0..u32::min(256, 1 << hash_bits) {
-                    for index in &group {
-                        if seen[(index ^ xor) as usize] {
-                            continue 'inner;
-                        }
-                    }
-                    good_xor = Some(xor);
-                    break;
-                }
-
-                let Some(xor) = good_xor else {
-                    continue 'outer;
-                };
-
-                for index in &group {
-                    seen[(index ^ xor) as usize] = true;
-                }
-                xor_table[i] = xor.try_into().unwrap();
-            }
-
-            return Some((
-                compile_xor_table(keys, ir, xor_table, hash_shift),
-                hash_bits,
-            ));
-        }
-    }
-
-    None
-}
-
-fn compile_xor_table(keys: &Keys, ir: &Ir, xor_table: Vec<u8>, hash_shift: u32) -> Ir {
-    let index_mask = (xor_table.len() - 1).try_into().unwrap();
-    let hash = ir.last_reg();
-
-    let mut ir = ir.clone();
-    let xor_table = ir.table(xor_table);
-    let index_mask = ir.instr(Instr::Imm(index_mask));
-    let masked_index = ir.instr(Instr::And(hash, index_mask));
-    let xor_table_value = ir.instr(Instr::Table(xor_table, masked_index));
-    let hash_shift = ir.instr(Instr::Imm(hash_shift));
-    let shifted_hash = ir.instr(Instr::Shrl(hash, hash_shift));
-    let hash = ir.instr(Instr::Xor(shifted_hash, xor_table_value));
-    ir.assert_distinguishes(keys, &[hash]);
-    ir
-}
-
-fn build_table(keys: &Keys, ir: &Ir, table_size: usize) -> Vec<Option<(Vec<u32>, usize)>> {
-    let mut table: Vec<Option<(Vec<u32>, usize)>> = vec![None; table_size];
-    for (i, key) in keys.all_keys() {
-        let index = if key.is_empty() {
-            0
-        } else {
-            Interpreter::new(ir).run(&key) as usize
-        };
-        assert!(table[index].is_none());
-        table[index] = Some((key, i));
-    }
-    assert!(table[0].is_none());
-    table
 }
