@@ -184,52 +184,58 @@ fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option
     let mut mask = !0;
     let mut sol_shifts = None;
 
-    'shifts: for packed_shifts in 0..(1u64 << (5 * sel_regs.len())) {
-        let shifts: Vec<u32> = (0..sel_regs.len())
-            .map(|i| ((packed_shifts >> (5 * i)) & 31) as u32)
-            .collect();
-
+    // Ensure that we always have at least one shift equal to 0. Otherwise the
+    // least significant bit of the mix is wasted, because it's always zero.
+    let max_nonzero_shifts = (sel_regs.len() - 1) as u32;
+    let mut mixes = HashSet::new();
+    'sol: for num_nonzero_shifts in 0..=max_nonzero_shifts {
+        let mut shift_gen = ShiftGen::new(sel_regs.len() as u32, num_nonzero_shifts, 31);
         loop {
-            let mut mixes = HashSet::new();
-            for interpreter in interpreters {
-                let mut mix = 0u32;
-                for (&sel_reg, &shift) in sel_regs.iter().zip(shifts.iter()) {
-                    mix = mix.wrapping_add(interpreter.reg(sel_reg) << shift);
-                }
-                mix &= mask;
+            'shifts: {
+                loop {
+                    mixes.clear();
+                    for interpreter in interpreters {
+                        let mut mix = 0u32;
+                        for (&sel_reg, &shift) in sel_regs.iter().zip(shift_gen.shifts.iter()) {
+                            mix = mix.wrapping_add(interpreter.reg(sel_reg) << shift);
+                        }
+                        mix &= mask;
 
-                if !mixes.insert(mix) {
-                    continue 'shifts;
+                        if !mixes.insert(mix) {
+                            break 'shifts;
+                        }
+                    }
+
+                    sol_shifts = Some(shift_gen.shifts.clone());
+                    mask >>= 1;
+                    if mask == 0 {
+                        break 'sol;
+                    }
                 }
             }
 
-            sol_shifts = Some(shifts.clone());
-            mask >>= 1;
-            if mask == 0 {
-                break 'shifts;
+            if !shift_gen.next() {
+                break;
             }
         }
     }
 
-    match sol_shifts {
-        Some(shifts) => {
-            let mut ir = ir.clone();
-            let shifted_regs = sel_regs
-                .iter()
-                .zip(shifts)
-                .map(|(&sel, left_shift)| {
-                    let left_shift = ir.instr(Instr::Imm(left_shift));
-                    ir.instr(Instr::Shll(sel, left_shift))
-                })
-                .collect::<Vec<_>>();
-            shifted_regs
-                .into_iter()
-                .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-                .unwrap();
-            Some(ir)
-        }
-        None => None,
-    }
+    let sol_shifts = sol_shifts?;
+
+    let mut ir = ir.clone();
+    let shifted_regs = sel_regs
+        .iter()
+        .zip(sol_shifts)
+        .map(|(&sel, left_shift)| {
+            let left_shift = ir.instr(Instr::Imm(left_shift));
+            ir.instr(Instr::Shll(sel, left_shift))
+        })
+        .collect::<Vec<_>>();
+    shifted_regs
+        .into_iter()
+        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
+        .unwrap();
+    Some(ir)
 }
 
 fn mixed_offset_search(
@@ -291,11 +297,13 @@ fn offset_table_search(
     let offset_table_size = table_size(offset_index_bits);
     let offset_table_index_mask = table_index_mask(offset_index_bits);
 
+    // Group all the bases for each offset index.
     let mut groups = vec![Vec::new(); offset_table_size];
     for (&base, &index) in bases.iter().zip(offset_indices) {
         groups[(index & offset_table_index_mask) as usize].push(base);
     }
 
+    // Sort the non-empty groups in descending order by size.
     let mut groups_and_indices = Vec::new();
     for (index, group) in groups.into_iter().enumerate() {
         if !group.is_empty() {
@@ -304,6 +312,8 @@ fn offset_table_search(
     }
     groups_and_indices.sort_by_key(|p| p.0.len());
     groups_and_indices.reverse();
+
+    // Assign offsets to indices using a first-fit algorithm.
 
     let hash_table_size = table_size(hash_bits);
     let hash_mask = table_index_mask(hash_bits);
