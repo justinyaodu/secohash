@@ -9,18 +9,106 @@ pub struct Reg(pub usize);
 pub struct Table(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    And,
+    Xor,
+    Shll,
+    Shrl,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Instr {
     Imm(u32),
     Table(Table, Reg),
+    TableIndexMask(Table),
     StrGet(Reg),
     StrLen,
-    Add(Reg, Reg),
-    Sub(Reg, Reg),
-    Mul(Reg, Reg),
-    And(Reg, Reg),
-    Xor(Reg, Reg),
-    Shll(Reg, Reg),
-    Shrl(Reg, Reg),
+    BinOp(BinOp, Reg, Reg),
+}
+
+pub enum Expr {
+    Reg(Reg),
+    Imm(u32),
+    Table(Table, Box<Expr>),
+    TableIndexMask(Table),
+    StrGet(Box<Expr>),
+    StrLen,
+    BinOp(BinOp, Box<Expr>, Box<Expr>),
+}
+
+impl Expr {
+    fn flatten(self, ir: &mut Ir) -> Reg {
+        match self {
+            Expr::Imm(n) => ir.instr(Instr::Imm(n)),
+            Expr::Reg(r) => r,
+            Expr::Table(t, i) => {
+                let i = i.flatten(ir);
+                ir.instr(Instr::Table(t, i))
+            }
+            Expr::TableIndexMask(t) => ir.instr(Instr::TableIndexMask(t)),
+            Expr::StrGet(i) => {
+                let i = i.flatten(ir);
+                ir.instr(Instr::StrGet(i))
+            }
+            Expr::StrLen => ir.instr(Instr::StrLen),
+            Expr::BinOp(op, a, b) => {
+                let a = a.flatten(ir);
+                let b = b.flatten(ir);
+                ir.instr(Instr::BinOp(op, a, b))
+            }
+        }
+    }
+}
+
+pub struct ExprBuilder();
+
+impl ExprBuilder {
+    pub fn imm(&self, n: u32) -> Expr {
+        Expr::Imm(n)
+    }
+
+    pub fn reg(&self, r: Reg) -> Expr {
+        Expr::Reg(r)
+    }
+
+    pub fn table(&self, t: Table, i: Expr) -> Expr {
+        Expr::Table(t, Box::new(i))
+    }
+
+    pub fn table_index_mask(&self, t: Table) -> Expr {
+        Expr::TableIndexMask(t)
+    }
+
+    pub fn str_get(&self, i: Expr) -> Expr {
+        Expr::StrGet(Box::new(i))
+    }
+
+    pub fn str_len(&self, ) -> Expr {
+        Expr::StrLen
+    }
+
+    pub fn add(&self, a: Expr, b: Expr) -> Expr {
+        Expr::BinOp(BinOp::Add, Box::new(a), Box::new(b))
+    }
+
+    pub fn sub(&self, a: Expr, b: Expr) -> Expr {
+        Expr::BinOp(BinOp::Sub, Box::new(a), Box::new(b))
+    }
+
+    pub fn and(&self, a: Expr, b: Expr) -> Expr {
+        Expr::BinOp(BinOp::And, Box::new(a), Box::new(b))
+    }
+
+    pub fn shll(&self, a: Expr, b: Expr) -> Expr {
+        Expr::BinOp(BinOp::Shll, Box::new(a), Box::new(b))
+    }
+
+    pub fn shrl(&self, a: Expr, b: Expr) -> Expr {
+        Expr::BinOp(BinOp::Shrl, Box::new(a), Box::new(b))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -42,6 +130,10 @@ impl Ir {
         Reg(self.instrs.len() - 1)
     }
 
+    pub fn expr(&mut self, expr: Expr) -> Reg {
+        expr.flatten(self)
+    }
+
     pub fn table(&mut self, table: Vec<u8>) -> Table {
         self.tables.push(table);
         Table(self.tables.len() - 1)
@@ -55,7 +147,7 @@ impl Ir {
         let mut hashes = HashSet::new();
         for key in &keys.non_empty_keys {
             let mut interpreter = Interpreter::new();
-            interpreter.run(&self, key);
+            interpreter.run(self, key);
             if !hashes.insert(regs.iter().map(|&r| interpreter.reg(r)).collect::<Vec<_>>()) {
                 return false;
             }
@@ -68,7 +160,7 @@ impl Ir {
             .iter()
             .map(|key| {
                 let mut interpreter = Interpreter::new();
-                interpreter.run(&self, key);
+                interpreter.run(self, key);
                 interpreter
             })
             .collect()
@@ -103,15 +195,22 @@ impl Interpreter {
             self.regs.push(match *instr {
                 Instr::Imm(n) => n,
                 Instr::Table(t, i) => self.table(ir, t, i),
+                Instr::TableIndexMask(t) => (ir.tables[t.0].len() - 1) as u32,
                 Instr::StrGet(i) => key[self.reg(i) as usize],
                 Instr::StrLen => key.len() as u32,
-                Instr::Add(a, b) => self.reg(a).wrapping_add(self.reg(b)),
-                Instr::Sub(a, b) => self.reg(a).wrapping_sub(self.reg(b)),
-                Instr::Mul(a, b) => self.reg(a).wrapping_mul(self.reg(b)),
-                Instr::And(a, b) => self.reg(a) & self.reg(b),
-                Instr::Xor(a, b) => self.reg(a) ^ self.reg(b),
-                Instr::Shll(a, b) => self.reg(a) << self.reg(b),
-                Instr::Shrl(a, b) => self.reg(a) >> self.reg(b),
+                Instr::BinOp(op, a, b) => {
+                    let a = self.reg(a);
+                    let b = self.reg(b);
+                    match op {
+                        BinOp::Add => a.wrapping_add(b),
+                        BinOp::Sub => a.wrapping_sub(b),
+                        BinOp::Mul => a.wrapping_mul(b),
+                        BinOp::And => a & b,
+                        BinOp::Xor => a ^ b,
+                        BinOp::Shll => a << b,
+                        BinOp::Shrl => a >> b,
+                    }
+                }
             });
         }
         self.regs.last().copied().unwrap()

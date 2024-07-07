@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    ir::{Instr, Interpreter, Ir, Reg},
+    ir::{ExprBuilder, Instr, Interpreter, Ir, Reg},
     keys::Keys,
     shift_gen::ShiftGen,
 };
@@ -61,24 +61,18 @@ fn no_offset_search_2(
     }
 
     let mut ir = ir.clone();
-    let shifted_regs = sel_regs
-        .iter()
-        .zip(shifts)
-        .map(|(&sel_reg, &shift)| {
-            if shift == 0 {
-                sel_reg
-            } else {
-                let shift_amount = ir.instr(Instr::Imm(shift));
-                ir.instr(Instr::Shll(sel_reg, shift_amount))
-            }
-        })
-        .collect::<Vec<_>>();
-    let unmasked_hash = shifted_regs
-        .into_iter()
-        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-        .unwrap();
-    let hash_mask = ir.instr(Instr::Imm(table_index_mask(hash_bits)));
-    ir.instr(Instr::And(unmasked_hash, hash_mask));
+    let e = ExprBuilder();
+    ir.expr(
+        e.and(
+            sel_regs
+                .iter()
+                .zip(shifts)
+                .map(|(&sel_reg, &shift)| e.shll(e.reg(sel_reg), e.imm(shift)))
+                .reduce(|a, b| e.add(a, b))
+                .unwrap(),
+            e.imm(table_index_mask(hash_bits)),
+        ),
+    );
     Some(ir)
 }
 
@@ -152,31 +146,25 @@ fn unmixed_offset_search_2(
     let table = table?;
 
     let mut ir = ir.clone();
+    let e = ExprBuilder();
     let table = ir.table(table);
-
-    let shifted_regs = base_sel_regs
-        .iter()
-        .zip(shifts)
-        .map(|(&sel_reg, &shift)| {
-            if shift == 0 {
-                sel_reg
-            } else {
-                let shift_amount = ir.instr(Instr::Imm(shift));
-                ir.instr(Instr::Shll(sel_reg, shift_amount))
-            }
-        })
-        .collect::<Vec<_>>();
-    let base_reg = shifted_regs
-        .into_iter()
-        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-        .unwrap();
-
-    let offset_index_mask = ir.instr(Instr::Imm(table_index_mask(offset_index_bits)));
-    let offset_index = ir.instr(Instr::And(offset_index_sel_reg, offset_index_mask));
-    let offset = ir.instr(Instr::Table(table, offset_index));
-    let unmasked_hash = ir.instr(Instr::Add(base_reg, offset));
-    let hash_mask = ir.instr(Instr::Imm(table_index_mask(hash_bits)));
-    ir.instr(Instr::And(unmasked_hash, hash_mask));
+    ir.expr(
+        e.and(
+            e.add(
+                base_sel_regs
+                    .iter()
+                    .zip(shifts)
+                    .map(|(&sel_reg, &shift)| e.shll(e.reg(sel_reg), e.imm(shift)))
+                    .reduce(|a, b| e.add(a, b))
+                    .unwrap(),
+                e.table(
+                    table,
+                    e.and(e.reg(offset_index_sel_reg), e.table_index_mask(table)),
+                ),
+            ),
+            e.imm(table_index_mask(hash_bits)),
+        ),
+    );
     Some(ir)
 }
 
@@ -223,18 +211,15 @@ fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option
     let sol_shifts = sol_shifts?;
 
     let mut ir = ir.clone();
-    let shifted_regs = sel_regs
-        .iter()
-        .zip(sol_shifts)
-        .map(|(&sel, left_shift)| {
-            let left_shift = ir.instr(Instr::Imm(left_shift));
-            ir.instr(Instr::Shll(sel, left_shift))
-        })
-        .collect::<Vec<_>>();
-    shifted_regs
-        .into_iter()
-        .reduce(|a, b| ir.instr(Instr::Add(a, b)))
-        .unwrap();
+    let e = ExprBuilder();
+    ir.expr(
+        sel_regs
+            .iter()
+            .zip(sol_shifts)
+            .map(|(&sel, left_shift)| e.shll(e.reg(sel), e.imm(left_shift)))
+            .reduce(|a, b| e.add(a, b))
+            .unwrap(),
+    );
     Some(ir)
 }
 
@@ -270,15 +255,16 @@ fn mixed_offset_search(
             };
 
             let mut ir = ir.clone();
+            let e = ExprBuilder();
             let offset_table = ir.table(offset_table);
-            let base_shift_reg = ir.instr(Instr::Imm(base_shift));
-            let base_reg = ir.instr(Instr::Shrl(mix_reg, base_shift_reg));
-            let offset_index_mask_reg = ir.instr(Instr::Imm(offset_index_mask));
-            let offset_index_reg = ir.instr(Instr::And(mix_reg, offset_index_mask_reg));
-            let offset_reg = ir.instr(Instr::Table(offset_table, offset_index_reg));
-            let unmasked_hash_reg = ir.instr(Instr::Add(base_reg, offset_reg));
-            let hash_mask_reg = ir.instr(Instr::Imm(table_index_mask(hash_bits)));
-            ir.instr(Instr::And(unmasked_hash_reg, hash_mask_reg));
+
+            ir.expr(e.and(
+                e.add(
+                    e.shrl(e.reg(mix_reg), e.imm(base_shift)),
+                    e.table(offset_table, e.and(e.reg(mix_reg), e.table_index_mask(offset_table))),
+                ),
+                e.imm(table_index_mask(hash_bits)),
+            ));
             return Some(ir);
         }
     }

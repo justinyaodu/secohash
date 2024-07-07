@@ -1,5 +1,5 @@
 use crate::{
-    ir::{Instr, Ir, Reg, Table},
+    ir::{Instr, Ir, Reg, Table, BinOp},
     keys::Keys,
 };
 
@@ -128,15 +128,21 @@ uint32_t hash(const char *key, size_t len) {"
             let expr = match instr {
                 Instr::Imm(n) => format!("{n}"),
                 Instr::Table(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
+                Instr::TableIndexMask(Table(t)) => format!("{}", (ir.tables[*t].len() - 1) as u32),
                 Instr::StrGet(Reg(i)) => format!("(uint32_t) key[r{i}]"),
                 Instr::StrLen => "(uint32_t) len".into(),
-                Instr::Add(Reg(a), Reg(b)) => format!("r{a} + r{b}"),
-                Instr::Sub(Reg(a), Reg(b)) => format!("r{a} - r{b}"),
-                Instr::Mul(Reg(a), Reg(b)) => format!("r{a} * r{b}"),
-                Instr::And(Reg(a), Reg(b)) => format!("r{a} & r{b}"),
-                Instr::Xor(Reg(a), Reg(b)) => format!("r{a} ^ r{b}"),
-                Instr::Shll(Reg(a), Reg(b)) => format!("r{a} << r{b}"),
-                Instr::Shrl(Reg(a), Reg(b)) => format!("r{a} >> r{b}"),
+                Instr::BinOp(op, Reg(a), Reg(b)) => {
+                    let op = match op {
+                        BinOp::Add => "+",
+                        BinOp::Sub => "-",
+                        BinOp::Mul => "*",
+                        BinOp::And => "&",
+                        BinOp::Xor => "^",
+                        BinOp::Shll => "<<",
+                        BinOp::Shrl => ">>",
+                    };
+                    format!("r{a} {op} r{b}")
+                }
             };
             lines.push(format!("    uint32_t r{i} = {expr};"));
         }

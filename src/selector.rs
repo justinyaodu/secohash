@@ -1,4 +1,4 @@
-use crate::ir::{Instr, Ir, Reg};
+use crate::ir::{ExprBuilder, Ir, Reg};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Selector {
@@ -23,36 +23,18 @@ impl Selector {
     }
 
     pub fn compile(&self, ir: &mut Ir) -> Reg {
-        match *self {
-            Selector::Len => ir.instr(Instr::StrLen),
-            Selector::Index(i) => {
-                let i = ir.instr(Instr::Imm(i));
-                ir.instr(Instr::StrGet(i))
-            }
+        let e = ExprBuilder();
+        let expr = match *self {
+            Selector::Len => e.str_len(),
+            Selector::Index(i) => e.str_get(e.imm(i)),
             Selector::Table(ref t) => {
                 let t = ir.table(t.to_vec());
-                let len = ir.instr(Instr::StrLen);
-                let index = ir.instr(Instr::Table(t, len));
-                ir.instr(Instr::StrGet(index))
+                e.str_get(e.table(t, e.str_len()))
             }
-            Selector::Sub(k) => {
-                let len = ir.instr(Instr::StrLen);
-                let k = ir.instr(Instr::Imm(k));
-                let index = ir.instr(Instr::Sub(len, k));
-                ir.instr(Instr::StrGet(index))
-            }
-            Selector::And(k) => {
-                let len = ir.instr(Instr::StrLen);
-                let k = ir.instr(Instr::Imm(k));
-                let index = ir.instr(Instr::And(len, k));
-                ir.instr(Instr::StrGet(index))
-            }
-            Selector::Shrl(k) => {
-                let len = ir.instr(Instr::StrLen);
-                let k = ir.instr(Instr::Imm(k));
-                let index = ir.instr(Instr::Shrl(len, k));
-                ir.instr(Instr::StrGet(index))
-            }
-        }
+            Selector::Sub(k) => e.str_get(e.sub(e.str_len(), e.imm(k))),
+            Selector::And(k) => e.str_get(e.and(e.str_len(), e.imm(k))),
+            Selector::Shrl(k) => e.str_get(e.shrl(e.str_len(), e.imm(k))),
+        };
+        ir.expr(expr)
     }
 }
