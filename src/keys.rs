@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet};
+use std::collections::HashSet;
 
 pub struct Keys {
     pub non_empty_keys: Vec<Vec<u32>>,
@@ -24,13 +24,14 @@ impl Keys {
             }
         }
 
-        let start_len = non_empty_keys.iter().map(Vec::len).min().unwrap_or(1);
-        let end_len = non_empty_keys
-            .iter()
-            .map(Vec::len)
-            .max()
-            .map(|n| n + 1)
-            .unwrap_or(1);
+        let (start_len, end_len) = if non_empty_keys.is_empty() {
+            (1, 1)
+        } else {
+            (
+                non_empty_keys.iter().map(Vec::len).min().unwrap(),
+                non_empty_keys.iter().map(Vec::len).max().unwrap() + 1,
+            )
+        };
 
         Keys {
             non_empty_keys,
@@ -40,21 +41,15 @@ impl Keys {
         }
     }
 
-    pub fn num_keys(&self) -> usize {
-        self.non_empty_keys.len() + self.empty_key_ordinal.iter().len()
+    pub fn all_keys(&self) -> Vec<Vec<u32>> {
+        let mut keys = self.non_empty_keys.clone();
+        if let Some(i) = self.empty_key_ordinal {
+            keys.insert(i, Vec::new())
+        }
+        keys
     }
 
-    pub fn all_keys(&self) -> Vec<(usize, Vec<u32>)> {
-        let empty_key_ordinal = self.empty_key_ordinal.unwrap_or(usize::MAX);
-        (0..self.num_keys())
-            .map(|i| {
-                let key = match i.cmp(&empty_key_ordinal) {
-                    Ordering::Less => self.non_empty_keys[i].clone(),
-                    Ordering::Equal => Vec::new(),
-                    Ordering::Greater => self.non_empty_keys[i - 1].clone(),
-                };
-                (i, key)
-            })
-            .collect()
+    pub fn num_keys(&self) -> usize {
+        self.all_keys().len()
     }
 }

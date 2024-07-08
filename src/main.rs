@@ -33,7 +33,7 @@ fn main() {
 
     let mut ir = Ir::new();
     let sel_regs: Vec<Reg> = sels.iter().map(|s| s.compile(&mut ir)).collect();
-    assert!(ir.distinguishes(&keys, &sel_regs));
+    assert!(ir.distinguishes(&keys, &sel_regs, 32));
 
     let Phf { ir, hash_table } = compressor_search(&keys, &ir, &sel_regs, keys.num_keys() * 4)
         .expect("compressor search failed");

@@ -29,7 +29,7 @@ impl Selector {
             Selector::Index(i) => e.str_get(e.imm(i)),
             Selector::Table(ref t) => {
                 let t = ir.table(t.to_vec());
-                e.str_get(e.table(t, e.str_len()))
+                e.str_get(e.table_get(t, e.str_len()))
             }
             Selector::Sub(k) => e.str_get(e.sub(e.str_len(), e.imm(k))),
             Selector::And(k) => e.str_get(e.and(e.str_len(), e.imm(k))),

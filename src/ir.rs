@@ -22,20 +22,22 @@ pub enum BinOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Instr {
     Imm(u32),
-    Table(Table, Reg),
-    TableIndexMask(Table),
     StrGet(Reg),
     StrLen,
+    TableGet(Table, Reg),
+    TableIndexMask(Table),
+    HashMask,
     BinOp(BinOp, Reg, Reg),
 }
 
 pub enum Expr {
     Reg(Reg),
     Imm(u32),
-    Table(Table, Box<Expr>),
-    TableIndexMask(Table),
     StrGet(Box<Expr>),
     StrLen,
+    TableGet(Table, Box<Expr>),
+    TableIndexMask(Table),
+    HashMask,
     BinOp(BinOp, Box<Expr>, Box<Expr>),
 }
 
@@ -44,16 +46,17 @@ impl Expr {
         match self {
             Expr::Imm(n) => ir.instr(Instr::Imm(n)),
             Expr::Reg(r) => r,
-            Expr::Table(t, i) => {
-                let i = i.flatten(ir);
-                ir.instr(Instr::Table(t, i))
-            }
-            Expr::TableIndexMask(t) => ir.instr(Instr::TableIndexMask(t)),
             Expr::StrGet(i) => {
                 let i = i.flatten(ir);
                 ir.instr(Instr::StrGet(i))
             }
             Expr::StrLen => ir.instr(Instr::StrLen),
+            Expr::TableGet(t, i) => {
+                let i = i.flatten(ir);
+                ir.instr(Instr::TableGet(t, i))
+            }
+            Expr::TableIndexMask(t) => ir.instr(Instr::TableIndexMask(t)),
+            Expr::HashMask => ir.instr(Instr::HashMask),
             Expr::BinOp(op, a, b) => {
                 let a = a.flatten(ir);
                 let b = b.flatten(ir);
@@ -74,20 +77,24 @@ impl ExprBuilder {
         Expr::Reg(r)
     }
 
-    pub fn table(&self, t: Table, i: Expr) -> Expr {
-        Expr::Table(t, Box::new(i))
-    }
-
-    pub fn table_index_mask(&self, t: Table) -> Expr {
-        Expr::TableIndexMask(t)
-    }
-
     pub fn str_get(&self, i: Expr) -> Expr {
         Expr::StrGet(Box::new(i))
     }
 
     pub fn str_len(&self, ) -> Expr {
         Expr::StrLen
+    }
+
+    pub fn table_get(&self, t: Table, i: Expr) -> Expr {
+        Expr::TableGet(t, Box::new(i))
+    }
+
+    pub fn table_index_mask(&self, t: Table) -> Expr {
+        Expr::TableIndexMask(t)
+    }
+
+    pub fn hash_mask(&self) -> Expr {
+        Expr::HashMask
     }
 
     pub fn add(&self, a: Expr, b: Expr) -> Expr {
@@ -143,11 +150,11 @@ impl Ir {
         Reg(self.instrs.len() - 1)
     }
 
-    pub fn distinguishes(&self, keys: &Keys, regs: &[Reg]) -> bool {
+    pub fn distinguishes(&self, keys: &Keys, regs: &[Reg], hash_bits: u32) -> bool {
         let mut hashes = HashSet::new();
         for key in &keys.non_empty_keys {
             let mut interpreter = Interpreter::new();
-            interpreter.run(self, key);
+            interpreter.run(self, key, hash_bits);
             if !hashes.insert(regs.iter().map(|&r| interpreter.reg(r)).collect::<Vec<_>>()) {
                 return false;
             }
@@ -155,12 +162,12 @@ impl Ir {
         true
     }
 
-    pub fn run_all(&self, keys: &Keys) -> Vec<Interpreter> {
+    pub fn run_all(&self, keys: &Keys, hash_bits: u32) -> Vec<Interpreter> {
         keys.non_empty_keys
             .iter()
             .map(|key| {
                 let mut interpreter = Interpreter::new();
-                interpreter.run(self, key);
+                interpreter.run(self, key, hash_bits);
                 interpreter
             })
             .collect()
@@ -190,14 +197,15 @@ impl Interpreter {
         table[index].into()
     }
 
-    pub fn run(&mut self, ir: &Ir, key: &[u32]) -> u32 {
+    pub fn run(&mut self, ir: &Ir, key: &[u32], hash_bits: u32) -> u32 {
         for instr in &ir.instrs {
             self.regs.push(match *instr {
                 Instr::Imm(n) => n,
-                Instr::Table(t, i) => self.table(ir, t, i),
-                Instr::TableIndexMask(t) => (ir.tables[t.0].len() - 1) as u32,
                 Instr::StrGet(i) => key[self.reg(i) as usize],
                 Instr::StrLen => key.len() as u32,
+                Instr::TableGet(t, i) => self.table(ir, t, i),
+                Instr::TableIndexMask(t) => (ir.tables[t.0].len() - 1) as u32,
+                Instr::HashMask => ((1u64 << hash_bits) - 1) as u32,
                 Instr::BinOp(op, a, b) => {
                     let a = self.reg(a);
                     let b = self.reg(b);

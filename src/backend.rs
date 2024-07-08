@@ -127,10 +127,11 @@ uint32_t hash(const char *key, size_t len) {"
         for (i, instr) in ir.instrs.iter().enumerate() {
             let expr = match instr {
                 Instr::Imm(n) => format!("{n}"),
-                Instr::Table(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
-                Instr::TableIndexMask(Table(t)) => format!("{}", (ir.tables[*t].len() - 1) as u32),
                 Instr::StrGet(Reg(i)) => format!("(uint32_t) key[r{i}]"),
                 Instr::StrLen => "(uint32_t) len".into(),
+                Instr::TableGet(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
+                Instr::TableIndexMask(Table(t)) => format!("{}", (ir.tables[*t].len() - 1) as u32),
+                Instr::HashMask => format!("{}", (table.len() - 1) as u32),
                 Instr::BinOp(op, Reg(a), Reg(b)) => {
                     let op = match op {
                         BinOp::Add => "+",

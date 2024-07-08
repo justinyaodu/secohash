@@ -70,7 +70,7 @@ fn no_offset_search_2(
                 .map(|(&sel_reg, &shift)| e.shll(e.reg(sel_reg), e.imm(shift)))
                 .reduce(|a, b| e.add(a, b))
                 .unwrap(),
-            e.imm(table_index_mask(hash_bits)),
+            e.hash_mask(),
         ),
     );
     Some(ir)
@@ -157,12 +157,12 @@ fn unmixed_offset_search_2(
                     .map(|(&sel_reg, &shift)| e.shll(e.reg(sel_reg), e.imm(shift)))
                     .reduce(|a, b| e.add(a, b))
                     .unwrap(),
-                e.table(
+                e.table_get(
                     table,
                     e.and(e.reg(offset_index_sel_reg), e.table_index_mask(table)),
                 ),
             ),
-            e.imm(table_index_mask(hash_bits)),
+            e.hash_mask(),
         ),
     );
     Some(ir)
@@ -232,7 +232,7 @@ fn mixed_offset_search(
 ) -> Option<Ir> {
     let ir = mix_search(ir, interpreters, sel_regs);
     let ir = ir?;
-    let interpreters = ir.run_all(keys);
+    let interpreters = ir.run_all(keys, hash_bits);
 
     let mix_reg = ir.last_reg();
     for offset_index_bits in 1..=hash_bits {
@@ -261,9 +261,12 @@ fn mixed_offset_search(
             ir.expr(e.and(
                 e.add(
                     e.shrl(e.reg(mix_reg), e.imm(base_shift)),
-                    e.table(offset_table, e.and(e.reg(mix_reg), e.table_index_mask(offset_table))),
+                    e.table_get(
+                        offset_table,
+                        e.and(e.reg(mix_reg), e.table_index_mask(offset_table)),
+                    ),
                 ),
-                e.imm(table_index_mask(hash_bits)),
+                e.hash_mask(),
             ));
             return Some(ir);
         }
@@ -344,11 +347,11 @@ pub struct Phf {
 impl Phf {
     fn new(keys: &Keys, ir: Ir, hash_bits: u32) -> Phf {
         let mut hash_table: Vec<Option<(Vec<u32>, usize)>> = vec![None; table_size(hash_bits)];
-        for (i, key) in keys.all_keys() {
+        for (i, key) in keys.all_keys().into_iter().enumerate() {
             let index = if key.is_empty() {
                 0
             } else {
-                Interpreter::new().run(&ir, &key) as usize
+                Interpreter::new().run(&ir, &key, hash_bits) as usize
             };
             assert!(hash_table[index].is_none());
             hash_table[index] = Some((key, i));
@@ -374,9 +377,8 @@ pub fn compressor_search(
         end_hash_bits += 1;
     }
 
-    let interpreters = ir.run_all(keys);
-
     for hash_bits in start_hash_bits..end_hash_bits {
+        let interpreters = ir.run_all(keys, hash_bits);
         if let Some(ir) = no_offset_search(ir, &interpreters, sel_regs, hash_bits) {
             return Some(Phf::new(keys, ir, hash_bits));
         }
