@@ -1,10 +1,7 @@
-use crate::{
-    ir::{Instr, Ir, Reg, Table, BinOp},
-    keys::Keys,
-};
+use crate::phf::{BinOp, Instr, Phf, Reg, Table};
 
 pub trait Backend {
-    fn emit(&self, keys: &Keys, ir: &Ir, table: &[Option<(Vec<u32>, usize)>]) -> String;
+    fn emit(&self, phf: &Phf) -> String;
 }
 
 pub struct CBackend {
@@ -56,7 +53,7 @@ impl CBackend {
 }
 
 impl Backend for CBackend {
-    fn emit(&self, keys: &Keys, ir: &Ir, table: &[Option<(Vec<u32>, usize)>]) -> String {
+    fn emit(&self, phf: &Phf) -> String {
         let mut lines: Vec<String> = Vec::new();
 
         lines.push(
@@ -75,24 +72,18 @@ const struct entry entries[] = {"
                 .into(),
         );
 
-        for (i, entry) in table.iter().enumerate() {
-            let entry = match entry {
-                Some((key, ordinal)) => {
-                    let len = key.len();
-                    let string_literal = self.string_literal(key);
-                    format!("{{ {string_literal}, {len}, {ordinal} }}")
-                }
-                None => {
-                    if i == 0 {
-                        let key = &table.iter().find_map(|s| s.as_ref()).unwrap().0;
-                        let string_literal = self.string_literal(key);
-                        let len = key.len();
-                        format!("{{ {string_literal}, {len}, -1 }}")
-                    } else {
-                        "{ \"\", 0, -1 }".into()
-                    }
-                }
+        for (i, key) in phf.hash_table.as_ref().unwrap().iter().enumerate() {
+            let string_literal = self.string_literal(key);
+
+            let len = key.len();
+            let is_fake_key = (i == 0) ^ (key.is_empty());
+            let ordinal: String = if is_fake_key {
+                "-1".into()
+            } else {
+                phf.keys.iter().position(|k| k == key).unwrap().to_string()
             };
+
+            let entry = format!("{{ {string_literal}, {len}, {ordinal} }}");
             lines.push(format!("    {entry},"));
         }
 
@@ -105,9 +96,9 @@ uint32_t hash(const char *key, size_t len) {"
         );
 
         {
-            let start = keys.start_len;
-            let end = keys.end_len;
-            lines.push(format!("    if (len < {start} || len >= {end}) {{"));
+            let min = phf.min_nonzero_key_len;
+            let max = phf.max_key_len;
+            lines.push(format!("    if (len < {min} || len > {max}) {{"));
             lines.push(
                 "        return 0;
     }"
@@ -115,7 +106,7 @@ uint32_t hash(const char *key, size_t len) {"
             );
         }
 
-        for (i, table) in ir.tables.iter().enumerate() {
+        for (i, table) in phf.data_tables.iter().enumerate() {
             let nums = table
                 .iter()
                 .map(|n| format!("{n}"))
@@ -124,14 +115,18 @@ uint32_t hash(const char *key, size_t len) {"
             lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
         }
 
-        for (i, instr) in ir.instrs.iter().enumerate() {
+        for (i, instr) in phf.instrs.iter().enumerate() {
             let expr = match instr {
                 Instr::Imm(n) => format!("{n}"),
                 Instr::StrGet(Reg(i)) => format!("(uint32_t) key[r{i}]"),
                 Instr::StrLen => "(uint32_t) len".into(),
                 Instr::TableGet(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
-                Instr::TableIndexMask(Table(t)) => format!("{}", (ir.tables[*t].len() - 1) as u32),
-                Instr::HashMask => format!("{}", (table.len() - 1) as u32),
+                Instr::TableIndexMask(Table(t)) => {
+                    format!("{}", (phf.data_tables[*t].len() - 1) as u32)
+                }
+                Instr::HashMask => {
+                    format!("{}", (phf.hash_table.as_ref().unwrap().len() - 1) as u32)
+                }
                 Instr::BinOp(op, Reg(a), Reg(b)) => {
                     let op = match op {
                         BinOp::Add => "+",
@@ -147,7 +142,7 @@ uint32_t hash(const char *key, size_t len) {"
             };
             lines.push(format!("    uint32_t r{i} = {expr};"));
         }
-        lines.push(format!("    return r{};", ir.instrs.len() - 1));
+        lines.push(format!("    return r{};", phf.instrs.len() - 1));
 
         lines.push(
             "\

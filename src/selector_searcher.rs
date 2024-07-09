@@ -1,29 +1,29 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{keys::Keys, selector::Selector};
+use crate::{phf::Phf, selector::Selector};
 
-pub fn selector_search(keys: &Keys) -> Option<Vec<Selector>> {
+pub fn selector_search(phf: &Phf) -> Option<Vec<Selector>> {
     {
         let mut selectors = Vec::new();
         selectors.push(Selector::Len);
-        for i in 0..keys.start_len {
+        for i in 0..phf.min_nonzero_key_len {
             selectors.push(Selector::Index(i as u32));
         }
-        for i in 1..=keys.start_len {
+        for i in 1..=phf.min_nonzero_key_len {
             selectors.push(Selector::Sub(i as u32));
         }
-        for i in 0..keys.start_len {
+        for i in 0..phf.min_nonzero_key_len {
             selectors.push(Selector::And(i as u32));
         }
         for i in 1.. {
-            if ((keys.end_len - 1) >> i) == 0 {
+            if (phf.max_key_len >> i) == 0 {
                 break;
             }
             selectors.push(Selector::Shrl(i as u32));
         }
 
         for choices in 1..4 {
-            let opt = search_rec(&keys.non_empty_keys, &selectors, Vec::new(), choices);
+            let opt = search_rec(&phf.interpreted_keys, &selectors, Vec::new(), choices);
             if opt.is_some() {
                 return opt;
             }
@@ -31,11 +31,11 @@ pub fn selector_search(keys: &Keys) -> Option<Vec<Selector>> {
     }
 
     let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
-    for key in &keys.non_empty_keys {
+    for key in &phf.interpreted_keys {
         keys_by_len.entry(key.len()).or_default().push(key.clone())
     }
     for choices in 1..4 {
-        let mut tables = vec![vec![0u8; keys.end_len]; choices];
+        let mut tables = vec![vec![0u8; phf.max_key_len + 1]; choices];
         let mut solved = true;
         for (&len, keys_with_len) in keys_by_len.iter() {
             let mut selectors = Vec::new();

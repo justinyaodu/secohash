@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    ir::{ExprBuilder, Instr, Interpreter, Ir, Reg},
-    keys::Keys,
+    phf::{ExprBuilder, Interpreter, Phf, Reg},
     shift_gen::ShiftGen,
 };
 
@@ -15,16 +14,16 @@ fn table_index_mask(index_bits: u32) -> u32 {
 }
 
 fn no_offset_search(
-    ir: &Ir,
-    interpreters: &[Interpreter],
+    phf: &Phf,
+    interpreter: &Interpreter,
     sel_regs: &[Reg],
     hash_bits: u32,
-) -> Option<Ir> {
+) -> Option<Phf> {
     for num_nonzero_shifts in 0..(sel_regs.len() as u32) {
         let mut shift_gen = ShiftGen::new(sel_regs.len() as u32, num_nonzero_shifts, hash_bits - 1);
 
         loop {
-            let sol = no_offset_search_2(ir, interpreters, sel_regs, hash_bits, &shift_gen.shifts);
+            let sol = no_offset_search_2(phf, interpreter, sel_regs, hash_bits, &shift_gen.shifts);
             if sol.is_some() {
                 return sol;
             }
@@ -39,19 +38,19 @@ fn no_offset_search(
 }
 
 fn no_offset_search_2(
-    ir: &Ir,
-    interpreters: &[Interpreter],
+    phf: &Phf,
+    interpreter: &Interpreter,
     sel_regs: &[Reg],
     hash_bits: u32,
     shifts: &[u32],
-) -> Option<Ir> {
+) -> Option<Phf> {
     assert!(sel_regs.len() == shifts.len());
 
     let mut seen = vec![false; table_size(hash_bits)];
-    for interpreter in interpreters {
+    for lane in 0..interpreter.width() {
         let mut hash = 0u32;
-        for i in 0..sel_regs.len() {
-            hash = hash.wrapping_add(interpreter.reg(sel_regs[i]) << shifts[i]);
+        for (i, &sel_reg) in sel_regs.iter().enumerate() {
+            hash = hash.wrapping_add(interpreter.reg_values(sel_reg)[lane] << shifts[i]);
         }
         hash &= table_index_mask(hash_bits);
         if seen[hash as usize] {
@@ -60,9 +59,9 @@ fn no_offset_search_2(
         seen[hash as usize] = true;
     }
 
-    let mut ir = ir.clone();
     let e = ExprBuilder();
-    ir.expr(
+    let mut phf = phf.clone();
+    phf.push_expr(
         e.and(
             sel_regs
                 .iter()
@@ -73,15 +72,15 @@ fn no_offset_search_2(
             e.hash_mask(),
         ),
     );
-    Some(ir)
+    Some(phf)
 }
 
 fn unmixed_offset_search(
-    ir: &Ir,
-    interpreters: &[Interpreter],
+    phf: &Phf,
+    interpreter: &Interpreter,
     sel_regs: &[Reg],
     hash_bits: u32,
-) -> Option<Ir> {
+) -> Option<Phf> {
     let num_base_sels = (sel_regs.len() - 1) as u32;
     for offset_index_bits in 1..=hash_bits {
         for index_sel_index in 0..sel_regs.len() {
@@ -93,8 +92,8 @@ fn unmixed_offset_search(
 
                 loop {
                     let sol = unmixed_offset_search_2(
-                        ir,
-                        interpreters,
+                        phf,
+                        interpreter,
                         &base_sel_regs,
                         hash_bits,
                         &shift_gen.shifts,
@@ -117,38 +116,33 @@ fn unmixed_offset_search(
 }
 
 fn unmixed_offset_search_2(
-    ir: &Ir,
-    interpreters: &[Interpreter],
+    phf: &Phf,
+    interpreter: &Interpreter,
     base_sel_regs: &[Reg],
     hash_bits: u32,
     shifts: &[u32],
     offset_index_sel_reg: Reg,
     offset_index_bits: u32,
-) -> Option<Ir> {
-    let bases: Vec<u32> = interpreters
-        .iter()
-        .map(|interpreter| {
-            let mut direct_value = 0u32;
-            for i in 0..base_sel_regs.len() {
-                direct_value =
-                    direct_value.wrapping_add(interpreter.reg(base_sel_regs[i]) << shifts[i]);
+) -> Option<Phf> {
+    let bases: Vec<u32> = (0..interpreter.width())
+        .map(|lane| {
+            let mut base = 0u32;
+            for (i, &base_sel_reg) in base_sel_regs.iter().enumerate() {
+                base = base.wrapping_add(interpreter.reg_values(base_sel_reg)[lane] << shifts[i]);
             }
-            direct_value
+            base
         })
         .collect();
 
-    let offset_indices: Vec<u32> = interpreters
-        .iter()
-        .map(|interpreter| interpreter.reg(offset_index_sel_reg))
-        .collect();
+    let offset_indices: Vec<u32> = interpreter.reg_values(offset_index_sel_reg).to_vec();
 
     let table = offset_table_search(&bases, &offset_indices, offset_index_bits, hash_bits);
     let table = table?;
 
-    let mut ir = ir.clone();
+    let mut phf = phf.clone();
+    let table = phf.push_data_table(table);
     let e = ExprBuilder();
-    let table = ir.table(table);
-    ir.expr(
+    phf.push_expr(
         e.and(
             e.add(
                 base_sel_regs
@@ -165,10 +159,10 @@ fn unmixed_offset_search_2(
             e.hash_mask(),
         ),
     );
-    Some(ir)
+    Some(phf)
 }
 
-fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option<Ir> {
+fn mix_search(phf: &Phf, interpreter: &Interpreter, sel_regs: &[Reg]) -> Option<Phf> {
     let mut mask = !0;
     let mut sol_shifts = None;
 
@@ -182,10 +176,10 @@ fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option
             'shifts: {
                 loop {
                     mixes.clear();
-                    for interpreter in interpreters {
+                    for lane in 0..interpreter.width() {
                         let mut mix = 0u32;
                         for (&sel_reg, &shift) in sel_regs.iter().zip(shift_gen.shifts.iter()) {
-                            mix = mix.wrapping_add(interpreter.reg(sel_reg) << shift);
+                            mix = mix.wrapping_add(interpreter.reg_values(sel_reg)[lane] << shift);
                         }
                         mix &= mask;
 
@@ -210,9 +204,9 @@ fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option
 
     let sol_shifts = sol_shifts?;
 
-    let mut ir = ir.clone();
+    let mut phf = phf.clone();
     let e = ExprBuilder();
-    ir.expr(
+    phf.push_expr(
         sel_regs
             .iter()
             .zip(sol_shifts)
@@ -220,32 +214,34 @@ fn mix_search(ir: &Ir, interpreters: &[Interpreter], sel_regs: &[Reg]) -> Option
             .reduce(|a, b| e.add(a, b))
             .unwrap(),
     );
-    Some(ir)
+    Some(phf)
 }
 
 fn mixed_offset_search(
-    keys: &Keys,
-    ir: &Ir,
-    interpreters: &[Interpreter],
+    phf: &Phf,
+    interpreter: &Interpreter,
     sel_regs: &[Reg],
     hash_bits: u32,
-) -> Option<Ir> {
-    let ir = mix_search(ir, interpreters, sel_regs);
-    let ir = ir?;
-    let interpreters = ir.run_all(keys, hash_bits);
+) -> Option<Phf> {
+    let phf = mix_search(phf, interpreter, sel_regs);
+    let phf = phf?;
 
-    let mix_reg = ir.last_reg();
+    let mix_reg = phf.last_reg();
+    let interpreter = Interpreter::new(&phf, &phf.interpreted_keys);
+
     for offset_index_bits in 1..=hash_bits {
         let offset_index_mask = table_index_mask(offset_index_bits);
-        for base_shift in 0..32 {
-            let bases: Vec<u32> = interpreters
-                .iter()
-                .map(|interpreter| interpreter.reg(mix_reg) >> base_shift)
-                .collect();
+        let offset_indices: Vec<u32> = interpreter
+            .reg_values(mix_reg)
+            .iter()
+            .map(|mix| mix & offset_index_mask)
+            .collect();
 
-            let offset_indices: Vec<u32> = interpreters
+        for base_shift in 0..32 {
+            let bases: Vec<u32> = interpreter
+                .reg_values(mix_reg)
                 .iter()
-                .map(|interpreter| interpreter.reg(mix_reg) & offset_index_mask)
+                .map(|mix| mix >> base_shift)
                 .collect();
 
             let Some(offset_table) =
@@ -254,11 +250,10 @@ fn mixed_offset_search(
                 continue;
             };
 
-            let mut ir = ir.clone();
+            let mut phf = phf.clone();
+            let offset_table = phf.push_data_table(offset_table);
             let e = ExprBuilder();
-            let offset_table = ir.table(offset_table);
-
-            ir.expr(e.and(
+            phf.push_expr(e.and(
                 e.add(
                     e.shrl(e.reg(mix_reg), e.imm(base_shift)),
                     e.table_get(
@@ -268,7 +263,7 @@ fn mixed_offset_search(
                 ),
                 e.hash_mask(),
             ));
-            return Some(ir);
+            return Some(phf);
         }
     }
 
@@ -339,36 +334,9 @@ fn offset_table_search(
     Some(offset_table)
 }
 
-pub struct Phf {
-    pub ir: Ir,
-    pub hash_table: Vec<Option<(Vec<u32>, usize)>>,
-}
-
-impl Phf {
-    fn new(keys: &Keys, ir: Ir, hash_bits: u32) -> Phf {
-        let mut hash_table: Vec<Option<(Vec<u32>, usize)>> = vec![None; table_size(hash_bits)];
-        for (i, key) in keys.all_keys().into_iter().enumerate() {
-            let index = if key.is_empty() {
-                0
-            } else {
-                Interpreter::new().run(&ir, &key, hash_bits) as usize
-            };
-            assert!(hash_table[index].is_none());
-            hash_table[index] = Some((key, i));
-        }
-
-        Phf { ir, hash_table }
-    }
-}
-
-pub fn compressor_search(
-    keys: &Keys,
-    ir: &Ir,
-    sel_regs: &[Reg],
-    max_table_size: usize,
-) -> Option<Phf> {
+pub fn compressor_search(phf: &Phf, sel_regs: &[Reg], max_table_size: usize) -> Option<Phf> {
     let mut start_hash_bits: u32 = 1;
-    while (1 << start_hash_bits) < keys.num_keys() {
+    while (1 << start_hash_bits) < phf.keys.len() {
         start_hash_bits += 1;
     }
 
@@ -377,16 +345,20 @@ pub fn compressor_search(
         end_hash_bits += 1;
     }
 
+    let interpreter = Interpreter::new(phf, &phf.interpreted_keys);
+
     for hash_bits in start_hash_bits..end_hash_bits {
-        let interpreters = ir.run_all(keys, hash_bits);
-        if let Some(ir) = no_offset_search(ir, &interpreters, sel_regs, hash_bits) {
-            return Some(Phf::new(keys, ir, hash_bits));
+        let mut sol = no_offset_search(phf, &interpreter, sel_regs, hash_bits);
+        if sol.is_none() {
+            sol = unmixed_offset_search(phf, &interpreter, sel_regs, hash_bits);
         }
-        if let Some(ir) = unmixed_offset_search(ir, &interpreters, sel_regs, hash_bits) {
-            return Some(Phf::new(keys, ir, hash_bits));
+        if sol.is_none() {
+            sol = mixed_offset_search(phf, &interpreter, sel_regs, hash_bits);
         }
-        if let Some(ir) = mixed_offset_search(keys, ir, &interpreters, sel_regs, hash_bits) {
-            return Some(Phf::new(keys, ir, hash_bits));
+
+        if let Some(mut phf) = sol {
+            phf.build_hash_table(hash_bits);
+            return Some(phf);
         }
     }
 
