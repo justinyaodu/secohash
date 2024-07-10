@@ -1,4 +1,5 @@
 mod backend;
+mod choose_gen;
 mod comb;
 mod compressor_searcher;
 mod phf;
@@ -12,7 +13,7 @@ use std::io::BufRead;
 use backend::{Backend, CBackend};
 use compressor_searcher::compressor_search;
 use phf::{Phf, Reg};
-use selector_searcher::selector_search;
+use selector_searcher::{selector_search, selector_search_2};
 
 fn main() {
     let mut stdin = io::stdin().lock();
@@ -25,10 +26,9 @@ fn main() {
         keys.push(line.trim().bytes().map(|c| c.into()).collect());
     }
 
-    let mut phf = Phf::new(&keys);
+    let phf = Phf::new(&keys);
 
-    let sels = selector_search(&phf).expect("selector search failed");
-    let sel_regs: Vec<Reg> = sels.iter().map(|s| s.compile(&mut phf)).collect();
+    let (phf, sel_regs) = selector_search_2(&phf).expect("selector search failed");
     // assert!(ir.distinguishes(&keys, &sel_regs, 32));
 
     let max_table_size = phf.keys.len() * 4;

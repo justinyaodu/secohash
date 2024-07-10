@@ -41,10 +41,9 @@ impl ShiftGen {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
-
     use super::*;
     use crate::comb::Comb;
+    use std::collections::HashSet;
 
     fn all_shifts(mut gen: ShiftGen) -> Vec<Vec<u32>> {
         let mut shifts = Vec::new();

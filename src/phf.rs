@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Reg(pub usize);
 
@@ -195,6 +197,29 @@ impl Phf {
             }
             self.hash_table.as_mut().unwrap()[0] = fake_key;
         }
+
+        self.validate()
+    }
+
+    fn validate(&self) {
+        let hash_reg = self.last_reg();
+
+        let mut keys = Vec::new();
+        for (i, key) in self.hash_table.as_ref().unwrap().iter().enumerate() {
+            let hash = if key.len() < self.min_nonzero_key_len || key.len() > self.max_key_len {
+                0
+            } else {
+                Interpreter::new(self, &[key.clone()]).reg_values(hash_reg)[0]
+            };
+            if hash == i.try_into().unwrap() {
+                keys.push(key.clone());
+            }
+        }
+
+        assert!(
+            keys.into_iter().collect::<HashSet<_>>()
+                == self.keys.iter().cloned().collect::<HashSet<_>>()
+        );
     }
 }
 
