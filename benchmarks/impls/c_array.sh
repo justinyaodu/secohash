@@ -23,6 +23,9 @@ for (( i = 0; ; i++ )); do
 EOF
 done < "${1}"
 
+echo "${i}" > "hash_table_size"
+echo 0 > "data_bytes"
+
 cat << EOF
     };
 

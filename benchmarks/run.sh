@@ -4,7 +4,8 @@ set -eu
 cd "$(dirname "${0}")"
 
 n="${1}"
-filter="${2:-}"
+dataset_filter="${2:-}"
+impl_filter="${3:-}"
 
 bin='bin'
 results='results'
@@ -14,7 +15,7 @@ mkdir "${results}"
 for dataset in datasets/*.txt; do
   dataset_name="$(basename "${dataset}" .txt)"
 
-  grep -q "${filter}" <<< "${dataset_name}" || continue
+  grep -Eq "${dataset_filter}" <<< "${dataset_name}" || continue
 
   shuffled="${results}/${dataset_name}_${n}.txt"
   utils/bin/shuffler "${n}" < "${dataset}" > "${shuffled}"
@@ -29,6 +30,7 @@ for dataset in datasets/*.txt; do
 
   for impl in impls/*.sh; do
     #grep -q 'control' <<< "${impl}" && continue
+    grep -Eq "${impl_filter}" <<< "${impl}" || continue
     impl_name="$(basename "${impl}" .sh)"
     bench_run="${bin}/${dataset_name}__${impl_name}/run"
     [ -f "${bench_run}" ] || continue

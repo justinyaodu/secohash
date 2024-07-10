@@ -12,6 +12,7 @@ gperf_cmd=(
   --readonly-tables
   --compare-lengths
   --includes
+  --multiple-iterations=10
   --slot-name=key
 )
 
@@ -37,6 +38,24 @@ uint32_t lookup(const char *key, size_t len) {
     return entry == NULL ? ((uint32_t) -1) : entry->value;
 }
 EOF
+
+hash_table_size=$(grep -Po '(?<=#define MAX_HASH_VALUE )[0-9]+' "${project}/hasher.c")
+(( hash_table_size++ ))
+echo "${hash_table_size}" > "hash_table_size"
+
+data_bytes_char=$(
+  tr '\n' '\r' < "${project}/hasher.c" | \
+  grep -Eo 'static const unsigned char asso_values\[\][^;]+;' | \
+  tr -dc ',;' | \
+  wc -c
+)
+data_bytes_short=$(
+  tr '\n' '\r' < "${project}/hasher.c" | \
+  grep -Eo 'static const unsigned short asso_values\[\][^;]+;' | \
+  tr -dc ',;' | \
+  wc -c
+)
+echo "$(( data_bytes_char + 2 * data_bytes_short ))" > "data_bytes"
 
 (cd "${project}" && GCC_FLAGS='-Wno-missing-field-initializers' make)
 
