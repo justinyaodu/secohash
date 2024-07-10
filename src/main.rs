@@ -12,8 +12,8 @@ use std::io::BufRead;
 
 use backend::{Backend, CBackend};
 use compressor_searcher::compressor_search;
-use phf::{Phf, Reg};
-use selector_searcher::{selector_search, selector_search_2};
+use phf::Phf;
+use selector_searcher::selector_search;
 
 fn main() {
     let mut stdin = io::stdin().lock();
@@ -27,9 +27,7 @@ fn main() {
     }
 
     let phf = Phf::new(&keys);
-
-    let (phf, sel_regs) = selector_search_2(&phf).expect("selector search failed");
-    // assert!(ir.distinguishes(&keys, &sel_regs, 32));
+    let (phf, sel_regs) = selector_search(&phf).expect("selector search failed");
 
     let max_table_size = phf.keys.len() * 4;
     let phf = compressor_search(&phf, &sel_regs, max_table_size).expect("compressor search failed");

@@ -6,111 +6,71 @@ use crate::{
     selector::Selector,
 };
 
-pub fn selector_search_2(phf: &Phf) -> Option<(Phf, Vec<Reg>)> {
-    let mut simple_selectors = Vec::new();
-    for i in 0..phf.min_nonzero_key_len {
-        simple_selectors.push(Selector::Index(i));
+pub fn selector_search(phf: &Phf) -> Option<(Phf, Vec<Reg>)> {
+    if let Some(selectors) = combined_search(phf) {
+        let mut phf = phf.clone();
+        let mut sel_regs = Vec::new();
+        for selector in selectors {
+            sel_regs.push(selector.compile(&mut phf));
+        }
+        Some((phf, sel_regs))
+    } else {
+        None
     }
-    for i in 1..=phf.min_nonzero_key_len {
-        simple_selectors.push(Selector::Sub(i));
+}
+
+fn combined_search(phf: &Phf) -> Option<Vec<Selector>> {
+    let sol = basic_search(phf);
+    if sol.is_some() {
+        return sol;
     }
-    for i in 0..phf.min_nonzero_key_len {
-        simple_selectors.push(Selector::And(i));
+
+    let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
+    for key in &phf.interpreted_keys {
+        keys_by_len.entry(key.len()).or_default().push(key.clone())
+    }
+
+    for num_tables in 1..=3 {
+        let sol = table_search(phf, &keys_by_len, num_tables);
+        if sol.is_some() {
+            return sol;
+        }
+    }
+
+    None
+}
+
+fn basic_search(phf: &Phf) -> Option<Vec<Selector>> {
+    let index_bound = usize::min(phf.min_nonzero_key_len, 32);
+
+    let mut selectors_1 = Vec::new();
+    selectors_1.push(Selector::Len);
+    for i in 0..index_bound {
+        selectors_1.push(Selector::Index(i));
+    }
+
+    let mut selectors_2 = selectors_1.clone();
+    for i in 1..=index_bound {
+        selectors_2.push(Selector::Sub(i));
+    }
+    for i in 0..index_bound {
+        selectors_2.push(Selector::And(i));
     }
     for i in 1..32 {
         if (phf.max_key_len >> i) == 0 {
             break;
         }
-        simple_selectors.push(Selector::Shrl(i));
+        selectors_2.push(Selector::Shrl(i));
     }
 
-    let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
-    for key in &phf.interpreted_keys {
-        keys_by_len.entry(key.len()).or_default().push(key.clone())
-    }
-
-    for num_selectors in 1..=4 {
-        for num_non_simple_selectors in 0..=num_selectors {
-            let num_simple_selectors = num_selectors - num_non_simple_selectors;
-            if num_simple_selectors > simple_selectors.len() {
-                break;
+    for num_choices in 1..=3 {
+        for selectors in [&selectors_1, &selectors_2] {
+            if num_choices > selectors.len() {
+                continue;
             }
-
-            let has_len_selector = num_non_simple_selectors > 0;
-            let num_table_selectors = if has_len_selector {
-                num_non_simple_selectors - 1
-            } else {
-                0
-            };
-
-            let mut simple_choose_gen =
-                ChooseGen::new(simple_selectors.len(), num_simple_selectors);
-            loop {
-                'outer: {
-                    if num_table_selectors > 0 {
-                        let mut tables = vec![vec![0u8; phf.max_key_len + 1]; num_table_selectors];
-                        'inner: for (&len, keys_with_len) in keys_by_len.iter() {
-                            let mut table_choose_gen =
-                                ChooseGen::new(len, usize::min(len, num_table_selectors));
-                            loop {
-                                let mut choices: Vec<Selector> = simple_choose_gen
-                                    .choices
-                                    .iter()
-                                    .map(|&i| simple_selectors[i].clone())
-                                    .collect();
-                                if has_len_selector {
-                                    choices.push(Selector::Len);
-                                }
-                                table_choose_gen
-                                    .choices
-                                    .iter()
-                                    .for_each(|&i| choices.push(Selector::Index(i)));
-
-                                if is_solution(keys_with_len, &choices) {
-                                    table_choose_gen
-                                        .choices
-                                        .iter()
-                                        .enumerate()
-                                        .for_each(|(i, &x)| tables[i][len] = x.try_into().unwrap());
-                                    continue 'inner;
-                                }
-
-                                if !table_choose_gen.next() {
-                                    break 'outer;
-                                }
-                            }
-                        }
-
-                        let mut choices: Vec<Selector> = simple_choose_gen
-                            .choices
-                            .iter()
-                            .map(|&i| simple_selectors[i].clone())
-                            .collect();
-                        if has_len_selector {
-                            choices.push(Selector::Len);
-                        }
-                        tables
-                            .into_iter()
-                            .for_each(|t| choices.push(Selector::Table(t)));
-                        return Some(compile_selectors(phf, &choices));
-                    } else {
-                        let mut choices: Vec<Selector> = simple_choose_gen
-                            .choices
-                            .iter()
-                            .map(|&i| simple_selectors[i].clone())
-                            .collect();
-                        if has_len_selector {
-                            choices.push(Selector::Len);
-                        }
-                        if is_solution(&phf.interpreted_keys, &choices) {
-                            return Some(compile_selectors(phf, &choices));
-                        }
-                    }
-                }
-
-                if !simple_choose_gen.next() {
-                    break;
-                }
+            let sol = find_distinguishing_selectors(&phf.interpreted_keys, selectors, num_choices);
+            if sol.is_some() {
+                return sol;
             }
         }
     }
@@ -118,104 +78,64 @@ pub fn selector_search_2(phf: &Phf) -> Option<(Phf, Vec<Reg>)> {
     None
 }
 
-fn compile_selectors(phf: &Phf, selectors: &[Selector]) -> (Phf, Vec<Reg>) {
-    let mut phf = phf.clone();
-    let mut sel_regs = Vec::new();
-    for selector in selectors {
-        sel_regs.push(selector.compile(&mut phf));
+fn table_search(
+    phf: &Phf,
+    keys_by_len: &HashMap<usize, Vec<Vec<u32>>>,
+    num_tables: usize,
+) -> Option<Vec<Selector>> {
+    let mut tables = vec![vec![0u8; phf.max_key_len + 1]; num_tables];
+
+    for (&len, keys_with_len) in keys_by_len.iter() {
+        let index_selectors: Vec<Selector> =
+            (0..usize::min(len, 32)).map(Selector::Index).collect();
+
+        let num_choices = usize::min(num_tables, index_selectors.len());
+
+        if let Some(chosen) =
+            find_distinguishing_selectors(keys_with_len, &index_selectors, num_choices)
+        {
+            for (i, choice) in chosen.into_iter().enumerate() {
+                let index = match choice {
+                    Selector::Index(index) => index,
+                    _ => panic!(),
+                };
+                tables[i][len] = index.try_into().unwrap();
+            }
+        } else {
+            return None;
+        }
     }
-    (phf, sel_regs)
+
+    let mut chosen = Vec::new();
+    chosen.push(Selector::Len);
+    for table in tables {
+        chosen.push(Selector::Table(table));
+    }
+    Some(chosen)
 }
 
-pub fn selector_search(phf: &Phf) -> Option<Vec<Selector>> {
-    {
-        let mut selectors = Vec::new();
-        for i in 0..phf.min_nonzero_key_len {
-            selectors.push(Selector::Index(i));
-        }
-        for i in 1..=phf.min_nonzero_key_len {
-            selectors.push(Selector::Sub(i));
-        }
-        for i in 0..phf.min_nonzero_key_len {
-            selectors.push(Selector::And(i));
-        }
-        for i in 1..32 {
-            if (phf.max_key_len >> i) == 0 {
-                break;
-            }
-            selectors.push(Selector::Shrl(i));
-        }
-
-        for choices in 1..4 {
-            let opt = search_rec(&phf.interpreted_keys, &selectors, Vec::new(), choices);
-            if opt.is_some() {
-                return opt;
-            }
-        }
-    }
-
-    let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
-    for key in &phf.interpreted_keys {
-        keys_by_len.entry(key.len()).or_default().push(key.clone())
-    }
-    for choices in 1..4 {
-        let mut tables = vec![vec![0u8; phf.max_key_len + 1]; choices];
-        let mut solved = true;
-        for (&len, keys_with_len) in keys_by_len.iter() {
-            let mut selectors = Vec::new();
-            for i in 0..len {
-                selectors.push(Selector::Index(i));
-            }
-            let opt = search_rec(keys_with_len, &selectors, vec![Selector::Len], choices);
-            match opt {
-                Some(sels) => {
-                    for (i, sel) in sels.iter().skip(1).enumerate() {
-                        let Selector::Index(index) = *sel else {
-                            panic!();
-                        };
-                        tables[i][len] = index.try_into().unwrap();
-                    }
-                }
-                None => {
-                    solved = false;
-                    break;
-                }
-            }
-        }
-        if solved {
-            let mut selectors = vec![Selector::Len];
-            selectors.extend(tables.into_iter().map(Selector::Table));
-            return Some(selectors);
-        }
-    }
-
-    None
-}
-
-fn search_rec(
+fn find_distinguishing_selectors(
     keys: &[Vec<u32>],
     selectors: &[Selector],
-    chosen: Vec<Selector>,
-    choices: usize,
+    k: usize,
 ) -> Option<Vec<Selector>> {
-    if choices == 0 || selectors.is_empty() {
-        return if is_solution(keys, &chosen) {
-            Some(chosen)
-        } else {
-            None
-        };
-    }
+    let n = selectors.len();
+    assert!(n >= k);
+    let mut choose_gen = ChooseGen::new(n, k);
+    loop {
+        let chosen: Vec<Selector> = choose_gen
+            .choices
+            .iter()
+            .map(|&i| selectors[i].clone())
+            .collect();
+        if is_solution(keys, &chosen) {
+            return Some(chosen);
+        }
 
-    for (i, sel) in selectors.iter().enumerate() {
-        let mut new_chosen = chosen.clone();
-        new_chosen.push(sel.clone());
-        let opt = search_rec(keys, &selectors[i + 1..], new_chosen, choices - 1);
-        if opt.is_some() {
-            return opt;
+        if !choose_gen.next() {
+            return None;
         }
     }
-
-    None
 }
 
 fn is_solution(keys: &[Vec<u32>], selectors: &[Selector]) -> bool {

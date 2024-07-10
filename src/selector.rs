@@ -11,17 +11,6 @@ pub enum Selector {
 }
 
 impl Selector {
-    pub fn cost(&self) -> usize {
-        match self {
-            Selector::Index(_) => 10,
-            Selector::Sub(_) => 11,
-            Selector::And(_) => 11,
-            Selector::Shrl(_) => 11,
-            Selector::Len => 1,
-            Selector::Table(_) => 100,
-        }
-    }
-
     pub fn eval(&self, key: &[u32]) -> u32 {
         match *self {
             Selector::Index(i) => key[i],
