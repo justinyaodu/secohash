@@ -109,7 +109,7 @@ uint32_t hash(const char *key, size_t len) {"
         for (i, table) in phf.data_tables.iter().enumerate() {
             let nums = table
                 .iter()
-                .map(|n| format!("{n}"))
+                .map(|n| n.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
@@ -117,16 +117,16 @@ uint32_t hash(const char *key, size_t len) {"
 
         for (i, instr) in phf.instrs.iter().enumerate() {
             let expr = match instr {
-                Instr::Imm(n) => format!("{n}"),
+                Instr::Imm(n) => n.to_string(),
                 Instr::StrGet(Reg(i)) => format!("(uint32_t) key[r{i}]"),
                 Instr::StrLen => "(uint32_t) len".into(),
                 Instr::TableGet(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
-                Instr::TableIndexMask(Table(t)) => {
-                    format!("{}", (phf.data_tables[*t].len() - 1) as u32)
-                }
-                Instr::HashMask => {
-                    format!("{}", (phf.hash_table.as_ref().unwrap().len() - 1) as u32)
-                }
+                Instr::TableIndexMask(Table(t)) => u32::try_from(phf.data_tables[*t].len() - 1)
+                    .unwrap()
+                    .to_string(),
+                Instr::HashMask => u32::try_from(phf.hash_table.as_ref().unwrap().len() - 1)
+                    .unwrap()
+                    .to_string(),
                 Instr::BinOp(op, Reg(a), Reg(b)) => {
                     let op = match op {
                         BinOp::Add => "+",
