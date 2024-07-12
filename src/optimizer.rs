@@ -83,17 +83,18 @@ fn thing(instrs: &[Instr]) -> Vec<Expr> {
             }
         }
     }
+
     let mut reg_map = HashMap::new();
     for (i, refcount) in refcounts.iter().copied().enumerate() {
-        if refcount > 1 {
+        if refcount > 1 && !matches!(instrs[i], Instr::Imm(_)) {
             let reg = reg_map.len();
             reg_map.insert(i, reg);
         }
     }
 
     let mut exprs = Vec::new();
-    for (i, refcount) in refcounts.iter().copied().enumerate() {
-        if refcount > 1 || i == refcounts.len() - 1 {
+    for i in 0..instrs.len() {
+        if reg_map.contains_key(&i) || i == instrs.len() - 1 {
             exprs.push(instr_to_expr(instrs, i, true, &reg_map));
         }
     }
