@@ -1,5 +1,7 @@
+#[cfg(test)]
 pub struct Comb(Vec<Vec<usize>>);
 
+#[cfg(test)]
 impl Comb {
     pub fn new() -> Comb {
         Comb(vec![vec![1]])

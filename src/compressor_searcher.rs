@@ -58,12 +58,13 @@ fn mix_search(phf: &Phf, interpreter: &Interpreter, sel_regs: &[Reg]) -> Option<
     let mut phf = phf.clone();
     let e = ExprBuilder();
     phf.push_expr(
-        sel_regs
-            .iter()
-            .zip(sol_shifts)
-            .map(|(&sel, left_shift)| e.shll(e.reg(sel), e.imm(left_shift)))
-            .reduce(|a, b| e.add(a, b))
-            .unwrap(),
+        e.sum(
+            sel_regs
+                .iter()
+                .zip(sol_shifts)
+                .map(|(&sel, left_shift)| e.shll(e.reg(sel), e.imm(left_shift)))
+                .collect(),
+        ),
     );
     Some(phf)
 }

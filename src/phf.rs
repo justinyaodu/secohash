@@ -28,6 +28,7 @@ pub enum Instr {
     BinOp(BinOp, Reg, Reg),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Reg(Reg),
     Imm(u32),
@@ -36,7 +37,7 @@ pub enum Expr {
     TableGet(Table, Box<Expr>),
     TableIndexMask(Table),
     HashMask,
-    BinOp(BinOp, Box<Expr>, Box<Expr>),
+    Reduce(BinOp, Vec<Expr>),
 }
 
 pub struct ExprBuilder();
@@ -71,23 +72,27 @@ impl ExprBuilder {
     }
 
     pub fn add(&self, a: Expr, b: Expr) -> Expr {
-        Expr::BinOp(BinOp::Add, Box::new(a), Box::new(b))
+        Expr::Reduce(BinOp::Add, vec![a, b])
     }
 
     pub fn sub(&self, a: Expr, b: Expr) -> Expr {
-        Expr::BinOp(BinOp::Sub, Box::new(a), Box::new(b))
+        Expr::Reduce(BinOp::Sub, vec![a, b])
     }
 
     pub fn and(&self, a: Expr, b: Expr) -> Expr {
-        Expr::BinOp(BinOp::And, Box::new(a), Box::new(b))
+        Expr::Reduce(BinOp::And, vec![a, b])
     }
 
     pub fn shll(&self, a: Expr, b: Expr) -> Expr {
-        Expr::BinOp(BinOp::Shll, Box::new(a), Box::new(b))
+        Expr::Reduce(BinOp::Shll, vec![a, b])
     }
 
     pub fn shrl(&self, a: Expr, b: Expr) -> Expr {
-        Expr::BinOp(BinOp::Shrl, Box::new(a), Box::new(b))
+        Expr::Reduce(BinOp::Shrl, vec![a, b])
+    }
+
+    pub fn sum(&self, exprs: Vec<Expr>) -> Expr {
+        Expr::Reduce(BinOp::Add, exprs)
     }
 }
 
@@ -158,11 +163,13 @@ impl Phf {
             }
             Expr::TableIndexMask(t) => self.push_instr(Instr::TableIndexMask(t)),
             Expr::HashMask => self.push_instr(Instr::HashMask),
-            Expr::BinOp(op, a, b) => {
-                let a = self.push_expr(*a);
-                let b = self.push_expr(*b);
-                self.push_instr(Instr::BinOp(op, a, b))
-            }
+            Expr::Reduce(op, exprs) => exprs
+                .into_iter()
+                .map(|e| self.push_expr(e))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .reduce(|a, b| self.push_instr(Instr::BinOp(op, a, b)))
+                .unwrap(),
         }
     }
 
