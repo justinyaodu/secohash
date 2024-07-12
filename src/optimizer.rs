@@ -11,43 +11,25 @@ fn instr_to_expr(instrs: &[Instr], i: usize) -> Expr {
         Instr::TableGet(t, r) => e.table_get(t, instr_to_expr(instrs, r.0)),
         Instr::TableIndexMask(t) => e.table_index_mask(t),
         Instr::HashMask => e.hash_mask(),
-        Instr::BinOp(op, a, b) => e.reduce(
-            op,
-            vec![instr_to_expr(instrs, a.0), instr_to_expr(instrs, b.0)],
-        ),
+        Instr::BinOp(op, a, b) => {
+            e.bin_op(op, instr_to_expr(instrs, a.0), instr_to_expr(instrs, b.0))
+        }
     }
 }
 
 fn remove_zero_shifts(expr: Expr) -> Expr {
     expr.transform(&|top| match top {
-        Expr::Reduce(BinOp::Shll | BinOp::Shrl, ref operands) => match &operands[..] {
-            [e, Expr::Imm(0)] => e.clone(),
-            _ => top,
-        },
-        _ => top,
-    })
-}
-
-fn flatten_nested_reductions(expr: Expr) -> Expr {
-    expr.transform(&|top| match top {
-        Expr::Reduce(op, children) => Expr::Reduce(
-            op,
-            children
-                .into_iter()
-                .flat_map(|child| match child {
-                    Expr::Reduce(child_op, grandchildren) if child_op == op => {
-                        grandchildren.into_iter()
-                    }
-                    child => vec![child].into_iter(),
-                })
-                .collect(),
-        ),
+        Expr::BinOp(BinOp::Shll | BinOp::Shrl, e, shift_amount)
+            if matches!(*shift_amount, Expr::Imm(0)) =>
+        {
+            *e
+        }
         _ => top,
     })
 }
 
 fn cleanup(expr: Expr) -> Expr {
-    remove_zero_shifts(flatten_nested_reductions(expr))
+    remove_zero_shifts(expr)
 }
 
 fn find_common_subexprs(expr: &Expr, seen: &mut HashSet<Expr>, common: &mut HashMap<Expr, usize>) {
@@ -63,10 +45,9 @@ fn find_common_subexprs(expr: &Expr, seen: &mut HashSet<Expr>, common: &mut Hash
         }
         Expr::TableIndexMask(_) => (),
         Expr::HashMask => (),
-        Expr::Reduce(_, operands) => {
-            for operand in operands {
-                find_common_subexprs(operand, seen, common);
-            }
+        Expr::BinOp(_, a, b) => {
+            find_common_subexprs(a, seen, common);
+            find_common_subexprs(b, seen, common);
         }
     }
     if seen.contains(expr) {
@@ -92,12 +73,10 @@ fn dedup_common_subexprs(expr: &Expr, common: &HashMap<Expr, usize>, top: bool) 
         Expr::Imm(_) | Expr::StrLen | Expr::TableIndexMask(_) | Expr::HashMask => expr.clone(),
         Expr::StrGet(ref i) => e.str_get(dedup_common_subexprs(i, common, false)),
         Expr::TableGet(t, ref i) => e.table_get(t, dedup_common_subexprs(i, common, false)),
-        Expr::Reduce(op, ref operands) => e.reduce(
+        Expr::BinOp(op, ref a, ref b) => e.bin_op(
             op,
-            operands
-                .iter()
-                .map(|operand| dedup_common_subexprs(operand, common, false))
-                .collect(),
+            dedup_common_subexprs(a, common, false),
+            dedup_common_subexprs(b, common, false),
         ),
     }
 }
@@ -107,8 +86,6 @@ pub fn optimize(instrs: &[Instr]) -> Vec<Expr> {
     let mut seen = HashSet::new();
     let mut common = HashMap::new();
     find_common_subexprs(&top, &mut seen, &mut common);
-    eprintln!("common={common:?}");
-    eprintln!("seen={seen:?}");
 
     let mut exprs = vec![Expr::HashMask; common.len() + 1];
     for (expr, &i) in &common {
@@ -131,25 +108,6 @@ mod test {
                 b.shll(b.shrl(b.hash_mask(), b.imm(0)), b.imm(0))
             ])),
             b.sum(vec![b.shll(b.imm(0), b.imm(2)), b.hash_mask()])
-        )
-    }
-
-    #[test]
-    fn test_flatten_nested_reductions() {
-        let b = ExprBuilder();
-        assert_eq!(
-            flatten_nested_reductions(b.sum(vec![
-                b.sum(vec![b.imm(0), b.sum(vec![b.imm(1), b.imm(2)])]),
-                b.imm(3),
-                b.sub(b.imm(4), b.imm(5))
-            ])),
-            b.sum(vec![
-                b.imm(0),
-                b.imm(1),
-                b.imm(2),
-                b.imm(3),
-                b.sub(b.imm(4), b.imm(5))
-            ])
         )
     }
 }

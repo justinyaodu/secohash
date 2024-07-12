@@ -37,7 +37,7 @@ pub enum Expr {
     TableGet(Table, Box<Expr>),
     TableIndexMask(Table),
     HashMask,
-    Reduce(BinOp, Vec<Expr>),
+    BinOp(BinOp, Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
@@ -45,17 +45,17 @@ impl Expr {
     where
         F: Fn(Expr) -> Expr,
     {
-        let b = ExprBuilder();
+        let x = ExprBuilder();
         let tmp = match self {
             Expr::Reg(_)
             | Expr::Imm(_)
             | Expr::StrLen
             | Expr::TableIndexMask(_)
             | Expr::HashMask => self,
-            Expr::StrGet(e) => b.str_get(e.transform(f)),
-            Expr::TableGet(t, e) => b.table_get(t, e.transform(f)),
-            Expr::Reduce(op, operands) => {
-                b.reduce(op, operands.into_iter().map(|e| e.transform(f)).collect())
+            Expr::StrGet(e) => x.str_get(e.transform(f)),
+            Expr::TableGet(t, e) => x.table_get(t, e.transform(f)),
+            Expr::BinOp(op, a, b) => {
+                x.bin_op(op, a.transform(f), b.transform(f))
             }
         };
         f(tmp)
@@ -94,31 +94,31 @@ impl ExprBuilder {
     }
 
     pub fn add(&self, a: Expr, b: Expr) -> Expr {
-        Expr::Reduce(BinOp::Add, vec![a, b])
+        self.bin_op(BinOp::Add, a, b)
     }
 
     pub fn sub(&self, a: Expr, b: Expr) -> Expr {
-        Expr::Reduce(BinOp::Sub, vec![a, b])
+        self.bin_op(BinOp::Sub, a, b)
     }
 
     pub fn and(&self, a: Expr, b: Expr) -> Expr {
-        Expr::Reduce(BinOp::And, vec![a, b])
+        self.bin_op(BinOp::And, a, b)
     }
 
     pub fn shll(&self, a: Expr, b: Expr) -> Expr {
-        Expr::Reduce(BinOp::Shll, vec![a, b])
+        self.bin_op(BinOp::Shll, a, b)
     }
 
     pub fn shrl(&self, a: Expr, b: Expr) -> Expr {
-        Expr::Reduce(BinOp::Shrl, vec![a, b])
+        self.bin_op(BinOp::Shrl, a, b)
     }
 
-    pub fn reduce(&self, op: BinOp, exprs: Vec<Expr>) -> Expr {
-        Expr::Reduce(op, exprs)
+    pub fn bin_op(&self, op: BinOp, a: Expr, b: Expr) -> Expr {
+        Expr::BinOp(op, Box::new(a), Box::new(b))
     }
 
     pub fn sum(&self, exprs: Vec<Expr>) -> Expr {
-        self.reduce(BinOp::Add, exprs)
+        exprs.into_iter().reduce(|a, b| self.add(a, b)).unwrap()
     }
 }
 
@@ -189,13 +189,11 @@ impl Phf {
             }
             Expr::TableIndexMask(t) => self.push_instr(Instr::TableIndexMask(t)),
             Expr::HashMask => self.push_instr(Instr::HashMask),
-            Expr::Reduce(op, exprs) => exprs
-                .into_iter()
-                .map(|e| self.push_expr(e))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .reduce(|a, b| self.push_instr(Instr::BinOp(op, a, b)))
-                .unwrap(),
+            Expr::BinOp(op, a, b) => {
+                let a = self.push_expr(*a);
+                let b = self.push_expr(*b);
+                self.push_instr(Instr::BinOp(op, a, b))
+            }
         }
     }
 

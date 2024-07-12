@@ -69,7 +69,7 @@ impl CBackend {
             }
             Expr::TableIndexMask(t) => ((phf.data_tables[t.0].len() - 1).to_string(), 0),
             Expr::HashMask => ((phf.hash_table.as_ref().unwrap().len() - 1).to_string(), 0),
-            Expr::Reduce(op, ref children) => {
+            Expr::BinOp(op, ref a, ref b) => {
                 let (op_str, op_prec) = match op {
                     BinOp::Add => ("+", 4),
                     BinOp::Sub => ("-", 4),
@@ -80,8 +80,8 @@ impl CBackend {
                     BinOp::Shrl => (">>", 5),
                 };
                 (
-                    children
-                        .iter()
+                    [a, b]
+                        .into_iter()
                         .map(|child| {
                             let (child_str, child_prec) = Self::compile_expr_rec(phf, child);
                             if child_prec < op_prec {
