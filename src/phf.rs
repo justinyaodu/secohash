@@ -17,6 +17,20 @@ pub enum BinOp {
     Shrl,
 }
 
+impl BinOp {
+    pub fn commutative(&self) -> bool {
+        match self {
+            BinOp::Add => true,
+            BinOp::Sub => false,
+            BinOp::Mul => true,
+            BinOp::And => true,
+            BinOp::Xor => true,
+            BinOp::Shll => false,
+            BinOp::Shrl => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Instr {
     Imm(u32),
@@ -54,9 +68,7 @@ impl Expr {
             | Expr::HashMask => self,
             Expr::StrGet(e) => x.str_get(e.transform(f)),
             Expr::TableGet(t, e) => x.table_get(t, e.transform(f)),
-            Expr::BinOp(op, a, b) => {
-                x.bin_op(op, a.transform(f), b.transform(f))
-            }
+            Expr::BinOp(op, a, b) => x.bin_op(op, a.transform(f), b.transform(f)),
         };
         f(tmp)
     }

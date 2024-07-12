@@ -75,10 +75,7 @@ mod test {
 
     #[test]
     fn test_3_3() {
-        assert_eq!(
-            all_choices(ChooseGen::new(3, 3)),
-            vec![vec![0, 1, 2]]
-        );
+        assert_eq!(all_choices(ChooseGen::new(3, 3)), vec![vec![0, 1, 2]]);
     }
 
     fn validate(comb: &mut Comb, n: usize, k: usize) {

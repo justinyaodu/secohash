@@ -58,33 +58,47 @@ impl CBackend {
         Self::compile_expr_rec(phf, expr).0
     }
 
-    fn compile_expr_rec(phf: &Phf, expr: &Expr) -> (String, usize) {
+    fn precedence(op: Option<BinOp>) -> usize {
+        match op {
+            None => 0,
+            Some(BinOp::Mul) => 1,
+            Some(BinOp::Add | BinOp::Sub | BinOp::And | BinOp::Xor) => 2,
+            Some(BinOp::Shll | BinOp::Shrl) => 3,
+        }
+    }
+
+    fn compile_expr_rec(phf: &Phf, expr: &Expr) -> (String, Option<BinOp>) {
         match *expr {
-            Expr::Reg(Reg(i)) => (format!("x{i}"), 0),
-            Expr::Imm(n) => (n.to_string(), 0),
-            Expr::StrGet(ref i) => (format!("key[{}]", Self::compile_expr_rec(phf, i).0), 1),
-            Expr::StrLen => ("len".into(), 0),
+            Expr::Reg(Reg(i)) => (format!("x{i}"), None),
+            Expr::Imm(n) => (n.to_string(), None),
+            Expr::StrGet(ref i) => (format!("key[{}]", Self::compile_expr_rec(phf, i).0), None),
+            Expr::StrLen => ("(uint32_t) len".into(), None),
             Expr::TableGet(Table(t), ref i) => {
-                (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), 1)
+                (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), None)
             }
-            Expr::TableIndexMask(t) => ((phf.data_tables[t.0].len() - 1).to_string(), 0),
-            Expr::HashMask => ((phf.hash_table.as_ref().unwrap().len() - 1).to_string(), 0),
+            Expr::TableIndexMask(t) => (format!("{:#x}", phf.data_tables[t.0].len() - 1), None),
+            Expr::HashMask => (
+                format!("{:#x}", phf.hash_table.as_ref().unwrap().len() - 1),
+                None,
+            ),
             Expr::BinOp(op, ref a, ref b) => {
-                let (op_str, op_prec) = match op {
-                    BinOp::Add => ("+", 4),
-                    BinOp::Sub => ("-", 4),
-                    BinOp::Mul => ("*", 3),
-                    BinOp::And => ("&", 8),
-                    BinOp::Xor => ("^", 9),
-                    BinOp::Shll => ("<<", 5),
-                    BinOp::Shrl => (">>", 5),
+                let op_str = match op {
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::Mul => "*",
+                    BinOp::And => "&",
+                    BinOp::Xor => "^",
+                    BinOp::Shll => "<<",
+                    BinOp::Shrl => ">>",
                 };
+                let op_prec = Self::precedence(Some(op));
                 (
                     [a, b]
                         .into_iter()
                         .map(|child| {
-                            let (child_str, child_prec) = Self::compile_expr_rec(phf, child);
-                            if child_prec < op_prec {
+                            let (child_str, child_op) = Self::compile_expr_rec(phf, child);
+                            let child_prec = Self::precedence(child_op);
+                            if child_prec < op_prec || (child_op == Some(op) && op.commutative()) {
                                 child_str
                             } else {
                                 format!("({child_str})")
@@ -92,7 +106,7 @@ impl CBackend {
                         })
                         .collect::<Vec<_>>()
                         .join(&format!(" {op_str} ")),
-                    op_prec,
+                    Some(op),
                 )
             }
         }
