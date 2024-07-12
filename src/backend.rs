@@ -1,4 +1,7 @@
-use crate::phf::{BinOp, Instr, Phf, Reg, Table};
+use crate::{
+    optimizer::optimize,
+    phf::{BinOp, Expr, Instr, Phf, Reg, Table},
+};
 
 pub trait Backend {
     fn emit(&self, phf: &Phf) -> String;
@@ -49,6 +52,50 @@ impl CBackend {
         }
         s.push('"');
         s
+    }
+
+    fn compile_expr(phf: &Phf, expr: &Expr) -> String {
+        Self::compile_expr_rec(phf, expr).0
+    }
+
+    fn compile_expr_rec(phf: &Phf, expr: &Expr) -> (String, usize) {
+        match *expr {
+            Expr::Reg(Reg(i)) => (format!("x{i}"), 0),
+            Expr::Imm(n) => (n.to_string(), 0),
+            Expr::StrGet(ref i) => (format!("key[{}]", Self::compile_expr_rec(phf, i).0), 1),
+            Expr::StrLen => ("len".into(), 0),
+            Expr::TableGet(Table(t), ref i) => {
+                (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), 1)
+            }
+            Expr::TableIndexMask(t) => ((phf.data_tables[t.0].len() - 1).to_string(), 0),
+            Expr::HashMask => ((phf.hash_table.as_ref().unwrap().len() - 1).to_string(), 0),
+            Expr::Reduce(op, ref children) => {
+                let (op_str, op_prec) = match op {
+                    BinOp::Add => ("+", 4),
+                    BinOp::Sub => ("-", 4),
+                    BinOp::Mul => ("*", 3),
+                    BinOp::And => ("&", 8),
+                    BinOp::Xor => ("^", 9),
+                    BinOp::Shll => ("<<", 5),
+                    BinOp::Shrl => (">>", 5),
+                };
+                (
+                    children
+                        .iter()
+                        .map(|child| {
+                            let (child_str, child_prec) = Self::compile_expr_rec(phf, child);
+                            if child_prec < op_prec {
+                                child_str
+                            } else {
+                                format!("({child_str})")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(&format!(" {op_str} ")),
+                    op_prec,
+                )
+            }
+        }
     }
 }
 
@@ -115,34 +162,18 @@ uint32_t hash(const char *key, size_t len) {"
             lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
         }
 
-        for (i, instr) in phf.instrs.iter().enumerate() {
-            let expr = match instr {
-                Instr::Imm(n) => n.to_string(),
-                Instr::StrGet(Reg(i)) => format!("(uint32_t) key[r{i}]"),
-                Instr::StrLen => "(uint32_t) len".into(),
-                Instr::TableGet(Table(t), Reg(i)) => format!("(uint32_t) t{t}[r{i}]"),
-                Instr::TableIndexMask(Table(t)) => u32::try_from(phf.data_tables[*t].len() - 1)
-                    .unwrap()
-                    .to_string(),
-                Instr::HashMask => u32::try_from(phf.hash_table.as_ref().unwrap().len() - 1)
-                    .unwrap()
-                    .to_string(),
-                Instr::BinOp(op, Reg(a), Reg(b)) => {
-                    let op = match op {
-                        BinOp::Add => "+",
-                        BinOp::Sub => "-",
-                        BinOp::Mul => "*",
-                        BinOp::And => "&",
-                        BinOp::Xor => "^",
-                        BinOp::Shll => "<<",
-                        BinOp::Shrl => ">>",
-                    };
-                    format!("r{a} {op} r{b}")
+        let exprs = optimize(&phf.instrs);
+        for (i, expr) in exprs.iter().enumerate() {
+            let expr_str = Self::compile_expr(phf, expr);
+            lines.push(format!(
+                "    {} {expr_str};",
+                if i == exprs.len() - 1 {
+                    "return".into()
+                } else {
+                    format!("uint32_t x{i} =")
                 }
-            };
-            lines.push(format!("    uint32_t r{i} = {expr};"));
+            ))
         }
-        lines.push(format!("    return r{};", phf.instrs.len() - 1));
 
         lines.push(
             "\

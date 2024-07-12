@@ -40,6 +40,28 @@ pub enum Expr {
     Reduce(BinOp, Vec<Expr>),
 }
 
+impl Expr {
+    pub fn transform<F>(self, f: &F) -> Expr
+    where
+        F: Fn(Expr) -> Expr,
+    {
+        let b = ExprBuilder();
+        let tmp = match self {
+            Expr::Reg(_)
+            | Expr::Imm(_)
+            | Expr::StrLen
+            | Expr::TableIndexMask(_)
+            | Expr::HashMask => self,
+            Expr::StrGet(e) => b.str_get(e.transform(f)),
+            Expr::TableGet(t, e) => b.table_get(t, e.transform(f)),
+            Expr::Reduce(op, operands) => {
+                b.reduce(op, operands.into_iter().map(|e| e.transform(f)).collect())
+            }
+        };
+        f(tmp)
+    }
+}
+
 pub struct ExprBuilder();
 
 impl ExprBuilder {
@@ -91,8 +113,12 @@ impl ExprBuilder {
         Expr::Reduce(BinOp::Shrl, vec![a, b])
     }
 
+    pub fn reduce(&self, op: BinOp, exprs: Vec<Expr>) -> Expr {
+        Expr::Reduce(op, exprs)
+    }
+
     pub fn sum(&self, exprs: Vec<Expr>) -> Expr {
-        Expr::Reduce(BinOp::Add, exprs)
+        self.reduce(BinOp::Add, exprs)
     }
 }
 
