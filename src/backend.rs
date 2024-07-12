@@ -1,6 +1,6 @@
 use crate::{
     optimizer::optimize,
-    phf::{BinOp, Expr, Instr, Phf, Reg, Table},
+    phf::{BinOp, Expr, Phf, Reg, Table},
 };
 
 pub trait Backend {
@@ -76,9 +76,9 @@ impl CBackend {
             Expr::TableGet(Table(t), ref i) => {
                 (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), None)
             }
-            Expr::TableIndexMask(t) => (format!("{:#x}", phf.data_tables[t.0].len() - 1), None),
+            Expr::TableIndexMask(t) => ((phf.data_tables[t.0].len() - 1).to_string(), None),
             Expr::HashMask => (
-                format!("{:#x}", phf.hash_table.as_ref().unwrap().len() - 1),
+                (phf.hash_table.as_ref().unwrap().len() - 1).to_string(),
                 None,
             ),
             Expr::BinOp(op, ref a, ref b) => {

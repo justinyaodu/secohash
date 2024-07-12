@@ -72,6 +72,35 @@ impl Expr {
         };
         f(tmp)
     }
+
+    fn push_instr(instrs: &mut Vec<Instr>, instr: Instr) -> Reg {
+        let reg = Reg(instrs.len());
+        instrs.push(instr);
+        reg
+    }
+
+    pub fn flatten(&self, instrs: &mut Vec<Instr>) -> Reg {
+        match *self {
+            Expr::Imm(n) => Self::push_instr(instrs, Instr::Imm(n)),
+            Expr::Reg(_) => panic!(),
+            Expr::StrGet(ref i) => {
+                let i = i.flatten(instrs);
+                Self::push_instr(instrs, Instr::StrGet(i))
+            }
+            Expr::StrLen => Self::push_instr(instrs, Instr::StrLen),
+            Expr::TableGet(t, ref i) => {
+                let i = i.flatten(instrs);
+                Self::push_instr(instrs, Instr::TableGet(t, i))
+            }
+            Expr::TableIndexMask(t) => Self::push_instr(instrs, Instr::TableIndexMask(t)),
+            Expr::HashMask => Self::push_instr(instrs, Instr::HashMask),
+            Expr::BinOp(op, ref a, ref b) => {
+                let a = a.flatten(instrs);
+                let b = b.flatten(instrs);
+                Self::push_instr(instrs, Instr::BinOp(op, a, b))
+            }
+        }
+    }
 }
 
 pub struct ExprBuilder();

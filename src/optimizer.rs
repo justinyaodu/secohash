@@ -1,21 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::phf::{BinOp, Expr, ExprBuilder, Instr, Reg};
-
-fn instr_to_expr(instrs: &[Instr], i: usize) -> Expr {
-    let e = ExprBuilder();
-    match instrs[i] {
-        Instr::Imm(n) => e.imm(n),
-        Instr::StrGet(r) => e.str_get(instr_to_expr(instrs, r.0)),
-        Instr::StrLen => e.str_len(),
-        Instr::TableGet(t, r) => e.table_get(t, instr_to_expr(instrs, r.0)),
-        Instr::TableIndexMask(t) => e.table_index_mask(t),
-        Instr::HashMask => e.hash_mask(),
-        Instr::BinOp(op, a, b) => {
-            e.bin_op(op, instr_to_expr(instrs, a.0), instr_to_expr(instrs, b.0))
-        }
-    }
-}
 
 fn remove_zero_shifts(expr: Expr) -> Expr {
     expr.transform(&|top| match top {
@@ -32,71 +17,106 @@ fn cleanup(expr: Expr) -> Expr {
     remove_zero_shifts(expr)
 }
 
-fn find_common_subexprs(expr: &Expr, seen: &mut HashSet<Expr>, common: &mut HashMap<Expr, usize>) {
-    match expr {
-        Expr::Reg(_) => panic!(),
-        Expr::Imm(_) => return,
-        Expr::StrGet(i) => {
-            find_common_subexprs(i, seen, common);
-        }
-        Expr::StrLen => (),
-        Expr::TableGet(_, i) => {
-            find_common_subexprs(i, seen, common);
-        }
-        Expr::TableIndexMask(_) => (),
-        Expr::HashMask => (),
-        Expr::BinOp(_, a, b) => {
-            find_common_subexprs(a, seen, common);
-            find_common_subexprs(b, seen, common);
-        }
+fn lvn(instrs: &[Instr]) -> Vec<Instr> {
+    let mut instr_to_new_reg: HashMap<Instr, Reg> = HashMap::new();
+    let mut reg_to_new_reg = Vec::new();
+    let mut new_instrs = Vec::new();
+
+    for instr in instrs {
+        let renamed = match *instr {
+            Instr::Imm(_) | Instr::StrLen | Instr::TableIndexMask(_) | Instr::HashMask => *instr,
+            Instr::StrGet(i) => Instr::StrGet(reg_to_new_reg[i.0]),
+            Instr::TableGet(t, i) => Instr::TableGet(t, reg_to_new_reg[i.0]),
+            Instr::BinOp(op, a, b) => Instr::BinOp(op, reg_to_new_reg[a.0], reg_to_new_reg[b.0]),
+        };
+        let new_reg = match instr_to_new_reg.get(&renamed).copied() {
+            Some(r) => r,
+            None => {
+                let r = Reg(instr_to_new_reg.len());
+                instr_to_new_reg.insert(renamed, r);
+                new_instrs.push(renamed);
+                r
+            }
+        };
+        reg_to_new_reg.push(new_reg);
     }
-    if seen.contains(expr) {
-        if !common.contains_key(expr) {
-            let id = common.len();
-            common.insert(expr.clone(), id);
-        }
-    } else {
-        seen.insert(expr.clone());
-    }
+
+    new_instrs
 }
 
-fn dedup_common_subexprs(expr: &Expr, common: &HashMap<Expr, usize>, top: bool) -> Expr {
-    let e = ExprBuilder();
+fn instr_to_expr(instrs: &[Instr], i: usize, top: bool, reg_map: &HashMap<usize, usize>) -> Expr {
     if !top {
-        if let Some(&id) = common.get(expr) {
-            return e.reg(Reg(id));
+        if let Some(r) = reg_map.get(&i).cloned() {
+            return Expr::Reg(Reg(r));
         }
     }
-
-    match *expr {
-        Expr::Reg(_) => panic!(),
-        Expr::Imm(_) | Expr::StrLen | Expr::TableIndexMask(_) | Expr::HashMask => expr.clone(),
-        Expr::StrGet(ref i) => e.str_get(dedup_common_subexprs(i, common, false)),
-        Expr::TableGet(t, ref i) => e.table_get(t, dedup_common_subexprs(i, common, false)),
-        Expr::BinOp(op, ref a, ref b) => e.bin_op(
+    let e = ExprBuilder();
+    match instrs[i] {
+        Instr::Imm(n) => e.imm(n),
+        Instr::StrGet(r) => e.str_get(instr_to_expr(instrs, r.0, false, reg_map)),
+        Instr::StrLen => e.str_len(),
+        Instr::TableGet(t, r) => e.table_get(t, instr_to_expr(instrs, r.0, false, reg_map)),
+        Instr::TableIndexMask(t) => e.table_index_mask(t),
+        Instr::HashMask => e.hash_mask(),
+        Instr::BinOp(op, a, b) => e.bin_op(
             op,
-            dedup_common_subexprs(a, common, false),
-            dedup_common_subexprs(b, common, false),
+            instr_to_expr(instrs, a.0, false, reg_map),
+            instr_to_expr(instrs, b.0, false, reg_map),
         ),
     }
 }
 
-pub fn optimize(instrs: &[Instr]) -> Vec<Expr> {
-    let top = cleanup(instr_to_expr(instrs, instrs.len() - 1));
-    let mut seen = HashSet::new();
-    let mut common = HashMap::new();
-    find_common_subexprs(&top, &mut seen, &mut common);
-
-    let mut exprs = vec![Expr::HashMask; common.len() + 1];
-    for (expr, &i) in &common {
-        exprs[i] = dedup_common_subexprs(expr, &common, true)
+fn thing(instrs: &[Instr]) -> Vec<Expr> {
+    let mut refcounts = vec![0usize; instrs.len()];
+    for instr in instrs {
+        match *instr {
+            Instr::Imm(_) | Instr::StrLen | Instr::TableIndexMask(_) | Instr::HashMask => (),
+            Instr::StrGet(i) => {
+                refcounts[i.0] += 1;
+            }
+            Instr::TableGet(_, i) => {
+                refcounts[i.0] += 1;
+            }
+            Instr::BinOp(_, a, b) => {
+                refcounts[a.0] += 1;
+                refcounts[b.0] += 1;
+            }
+        }
     }
-    exprs[common.len()] = dedup_common_subexprs(&top, &common, true);
+    let mut reg_map = HashMap::new();
+    for (i, refcount) in refcounts.iter().copied().enumerate() {
+        if refcount > 1 {
+            let reg = reg_map.len();
+            reg_map.insert(i, reg);
+        }
+    }
+
+    let mut exprs = Vec::new();
+    for (i, refcount) in refcounts.iter().copied().enumerate() {
+        if refcount > 1 || i == refcounts.len() - 1 {
+            exprs.push(instr_to_expr(instrs, i, true, &reg_map));
+        }
+    }
     exprs
+}
+
+pub fn optimize(instrs: &[Instr]) -> Vec<Expr> {
+    let top = cleanup(instr_to_expr(
+        instrs,
+        instrs.len() - 1,
+        true,
+        &HashMap::new(),
+    ));
+    let mut instrs = Vec::new();
+    top.flatten(&mut instrs);
+    let instrs = lvn(&instrs);
+    thing(&instrs)
 }
 
 #[cfg(test)]
 mod test {
+    use crate::phf::Table;
+
     use super::*;
 
     #[test]
@@ -108,6 +128,24 @@ mod test {
                 b.shll(b.shrl(b.hash_mask(), b.imm(0)), b.imm(0))
             ])),
             b.sum(vec![b.shll(b.imm(0), b.imm(2)), b.hash_mask()])
+        )
+    }
+
+    #[test]
+    fn test_lvn() {
+        assert_eq!(
+            lvn(&[
+                Instr::StrLen,
+                Instr::StrLen,
+                Instr::BinOp(BinOp::Add, Reg(0), Reg(1)),
+                Instr::BinOp(BinOp::Add, Reg(0), Reg(1)),
+                Instr::TableGet(Table(0), Reg(3)),
+            ]),
+            vec![
+                Instr::StrLen,
+                Instr::BinOp(BinOp::Add, Reg(0), Reg(0)),
+                Instr::TableGet(Table(0), Reg(1))
+            ]
         )
     }
 }
