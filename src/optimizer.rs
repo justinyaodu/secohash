@@ -13,11 +13,7 @@ fn remove_zero_shifts(expr: Expr) -> Expr {
     })
 }
 
-fn cleanup(expr: Expr) -> Expr {
-    remove_zero_shifts(expr)
-}
-
-fn lvn(instrs: &[Instr]) -> Vec<Instr> {
+fn eliminate_common_subexprs(instrs: &[Instr]) -> Vec<Instr> {
     let mut instr_to_new_reg: HashMap<Instr, Reg> = HashMap::new();
     let mut reg_to_new_reg = Vec::new();
     let mut new_instrs = Vec::new();
@@ -32,9 +28,8 @@ fn lvn(instrs: &[Instr]) -> Vec<Instr> {
         let new_reg = match instr_to_new_reg.get(&renamed).copied() {
             Some(r) => r,
             None => {
-                let r = Reg(instr_to_new_reg.len());
+                let r = renamed.push_into(&mut new_instrs);
                 instr_to_new_reg.insert(renamed, r);
-                new_instrs.push(renamed);
                 r
             }
         };
@@ -44,29 +39,27 @@ fn lvn(instrs: &[Instr]) -> Vec<Instr> {
     new_instrs
 }
 
-fn instr_to_expr(instrs: &[Instr], i: usize, top: bool, reg_map: &HashMap<usize, usize>) -> Expr {
-    if !top {
-        if let Some(r) = reg_map.get(&i).cloned() {
-            return Expr::Reg(Reg(r));
-        }
+fn unflatten_one(instrs: &[Instr], i: usize, subexpr_regs: &HashMap<usize, usize>) -> Expr {
+    if let Some(r) = subexpr_regs.get(&i).cloned() {
+        return Expr::Reg(Reg(r));
     }
     let e = ExprBuilder();
     match instrs[i] {
         Instr::Imm(n) => e.imm(n),
-        Instr::StrGet(r) => e.str_get(instr_to_expr(instrs, r.0, false, reg_map)),
+        Instr::StrGet(r) => e.str_get(unflatten_one(instrs, r.0, subexpr_regs)),
         Instr::StrLen => e.str_len(),
-        Instr::TableGet(t, r) => e.table_get(t, instr_to_expr(instrs, r.0, false, reg_map)),
+        Instr::TableGet(t, r) => e.table_get(t, unflatten_one(instrs, r.0, subexpr_regs)),
         Instr::TableIndexMask(t) => e.table_index_mask(t),
         Instr::HashMask => e.hash_mask(),
         Instr::BinOp(op, a, b) => e.bin_op(
             op,
-            instr_to_expr(instrs, a.0, false, reg_map),
-            instr_to_expr(instrs, b.0, false, reg_map),
+            unflatten_one(instrs, a.0, subexpr_regs),
+            unflatten_one(instrs, b.0, subexpr_regs),
         ),
     }
 }
 
-fn thing(instrs: &[Instr]) -> Vec<Expr> {
+fn unflatten_many(instrs: &[Instr]) -> Vec<Expr> {
     let mut refcounts = vec![0usize; instrs.len()];
     for instr in instrs {
         match *instr {
@@ -84,34 +77,29 @@ fn thing(instrs: &[Instr]) -> Vec<Expr> {
         }
     }
 
-    let mut reg_map = HashMap::new();
+    let mut subexpr_regs = HashMap::new();
+    let mut exprs = Vec::new();
     for (i, refcount) in refcounts.iter().copied().enumerate() {
         if refcount > 1 && !matches!(instrs[i], Instr::Imm(_)) {
-            let reg = reg_map.len();
-            reg_map.insert(i, reg);
+            let reg = subexpr_regs.len();
+            exprs.push(unflatten_one(instrs, i, &subexpr_regs));
+            subexpr_regs.insert(i, reg);
         }
     }
-
-    let mut exprs = Vec::new();
-    for i in 0..instrs.len() {
-        if reg_map.contains_key(&i) || i == instrs.len() - 1 {
-            exprs.push(instr_to_expr(instrs, i, true, &reg_map));
-        }
-    }
+    exprs.push(unflatten_one(instrs, instrs.len() - 1, &subexpr_regs));
     exprs
 }
 
 pub fn optimize(instrs: &[Instr]) -> Vec<Expr> {
-    let top = cleanup(instr_to_expr(
+    let top = remove_zero_shifts(unflatten_one(
         instrs,
         instrs.len() - 1,
-        true,
         &HashMap::new(),
     ));
     let mut instrs = Vec::new();
     top.flatten(&mut instrs);
-    let instrs = lvn(&instrs);
-    thing(&instrs)
+    let instrs = eliminate_common_subexprs(&instrs);
+    unflatten_many(&instrs)
 }
 
 #[cfg(test)]
@@ -133,9 +121,9 @@ mod test {
     }
 
     #[test]
-    fn test_lvn() {
+    fn test_eliminate_common_subexprs() {
         assert_eq!(
-            lvn(&[
+            eliminate_common_subexprs(&[
                 Instr::StrLen,
                 Instr::StrLen,
                 Instr::BinOp(BinOp::Add, Reg(0), Reg(1)),

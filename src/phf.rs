@@ -42,6 +42,13 @@ pub enum Instr {
     BinOp(BinOp, Reg, Reg),
 }
 
+impl Instr {
+    pub fn push_into(self, instrs: &mut Vec<Instr>) -> Reg {
+        instrs.push(self);
+        Reg(instrs.len() - 1)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Reg(Reg),
@@ -73,31 +80,25 @@ impl Expr {
         f(tmp)
     }
 
-    fn push_instr(instrs: &mut Vec<Instr>, instr: Instr) -> Reg {
-        let reg = Reg(instrs.len());
-        instrs.push(instr);
-        reg
-    }
-
     pub fn flatten(&self, instrs: &mut Vec<Instr>) -> Reg {
         match *self {
-            Expr::Imm(n) => Self::push_instr(instrs, Instr::Imm(n)),
-            Expr::Reg(_) => panic!(),
+            Expr::Imm(n) => Instr::Imm(n).push_into(instrs),
+            Expr::Reg(r) => r,
             Expr::StrGet(ref i) => {
                 let i = i.flatten(instrs);
-                Self::push_instr(instrs, Instr::StrGet(i))
+                Instr::StrGet(i).push_into(instrs)
             }
-            Expr::StrLen => Self::push_instr(instrs, Instr::StrLen),
+            Expr::StrLen => Instr::StrLen.push_into(instrs),
             Expr::TableGet(t, ref i) => {
                 let i = i.flatten(instrs);
-                Self::push_instr(instrs, Instr::TableGet(t, i))
+                Instr::TableGet(t, i).push_into(instrs)
             }
-            Expr::TableIndexMask(t) => Self::push_instr(instrs, Instr::TableIndexMask(t)),
-            Expr::HashMask => Self::push_instr(instrs, Instr::HashMask),
+            Expr::TableIndexMask(t) => Instr::TableIndexMask(t).push_into(instrs),
+            Expr::HashMask => Instr::HashMask.push_into(instrs),
             Expr::BinOp(op, ref a, ref b) => {
                 let a = a.flatten(instrs);
                 let b = b.flatten(instrs);
-                Self::push_instr(instrs, Instr::BinOp(op, a, b))
+                Instr::BinOp(op, a, b).push_into(instrs)
             }
         }
     }
@@ -205,37 +206,13 @@ impl Phf {
         Reg(self.instrs.len() - 1)
     }
 
-    fn push_instr(&mut self, instr: Instr) -> Reg {
-        self.instrs.push(instr);
-        Reg(self.instrs.len() - 1)
-    }
-
     pub fn push_data_table(&mut self, table: Vec<u8>) -> Table {
         self.data_tables.push(table);
         Table(self.data_tables.len() - 1)
     }
 
     pub fn push_expr(&mut self, expr: Expr) -> Reg {
-        match expr {
-            Expr::Imm(n) => self.push_instr(Instr::Imm(n)),
-            Expr::Reg(r) => r,
-            Expr::StrGet(i) => {
-                let i = self.push_expr(*i);
-                self.push_instr(Instr::StrGet(i))
-            }
-            Expr::StrLen => self.push_instr(Instr::StrLen),
-            Expr::TableGet(t, i) => {
-                let i = self.push_expr(*i);
-                self.push_instr(Instr::TableGet(t, i))
-            }
-            Expr::TableIndexMask(t) => self.push_instr(Instr::TableIndexMask(t)),
-            Expr::HashMask => self.push_instr(Instr::HashMask),
-            Expr::BinOp(op, a, b) => {
-                let a = self.push_expr(*a);
-                let b = self.push_expr(*b);
-                self.push_instr(Instr::BinOp(op, a, b))
-            }
-        }
+        expr.flatten(&mut self.instrs)
     }
 
     pub fn build_hash_table(&mut self, hash_bits: u32) {
