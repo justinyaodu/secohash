@@ -1,6 +1,8 @@
+use std::fmt::Display;
+
 use crate::{
-    optimizer::optimize,
-    phf::{BinOp, Expr, Phf, Reg, Table},
+    optimizer::{optimize, unflatten_many},
+    phf::{BinOp, Expr, Instr, Phf, Reg, Table},
 };
 
 pub trait Backend {
@@ -112,9 +114,46 @@ impl CBackend {
         }
     }
 }
+struct Declaration {
+    used: bool,
+    declaration: String,
+}
+
+impl Declaration {
+    fn new(used: bool, declaration: &str) -> Declaration {
+        Declaration {
+            used,
+            declaration: declaration.to_string(),
+        }
+    }
+
+    fn with_unused_attribute(&self) -> String {
+        format!(
+            "{}{}",
+            if self.used {
+                ""
+            } else {
+                "__attribute__((unused)) "
+            },
+            self.declaration
+        )
+    }
+}
+
+impl Display for Declaration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.declaration)
+    }
+}
 
 impl Backend for CBackend {
     fn emit(&self, phf: &Phf) -> String {
+        let instrs = optimize(&phf.instrs);
+
+        let key_used = instrs.iter().any(|i| matches!(&i, Instr::StrGet(_)));
+        let key = Declaration::new(key_used, "const char* key");
+        let len = Declaration::new(true, "size_t len");
+
         let mut lines: Vec<String> = Vec::new();
 
         lines.push(
@@ -148,23 +187,22 @@ const struct entry entries[] = {"
             lines.push(format!("    {entry},"));
         }
 
-        lines.push(
-            "\
-};
+        lines.push(format!(
+            "}};
 
-uint32_t hash(const char *key, size_t len) {"
-                .into(),
-        );
+uint32_t hash({}, {}) {{",
+            key.with_unused_attribute(),
+            len.with_unused_attribute()
+        ));
 
         {
             let min = phf.min_nonzero_key_len;
             let max = phf.max_key_len;
-            lines.push(format!("    if (len < {min} || len > {max}) {{"));
-            lines.push(
-                "        return 0;
-    }"
-                .into(),
-            );
+            lines.push(format!(
+                "    if (len < {min} || len > {max}) {{
+        return 0;
+    }}"
+            ));
         }
 
         for (i, table) in phf.data_tables.iter().enumerate() {
@@ -176,7 +214,7 @@ uint32_t hash(const char *key, size_t len) {"
             lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
         }
 
-        let exprs = optimize(&phf.instrs);
+        let exprs = unflatten_many(&instrs);
         for (i, expr) in exprs.iter().enumerate() {
             let expr_str = Self::compile_expr(phf, expr);
             lines.push(format!(
@@ -189,19 +227,17 @@ uint32_t hash(const char *key, size_t len) {"
             ))
         }
 
-        lines.push(
-            "\
-}
+        lines.push(format!(
+            "}}
 
-uint32_t lookup(const char *key, size_t len) {
+uint32_t lookup({key}, {len}) {{
     uint32_t i = hash(key, len);
-    if (len == entries[i].len && memcmp(key, entries[i].key, len) == 0) {
+    if (len == entries[i].len && memcmp(key, entries[i].key, len) == 0) {{
         return entries[i].value;
-    }
+    }}
     return -1;
-}"
-            .into(),
-        );
+}}"
+        ));
 
         lines.join("\n")
     }

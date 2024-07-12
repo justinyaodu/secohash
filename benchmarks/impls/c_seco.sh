@@ -28,7 +28,7 @@ data_bytes=$(
 )
 echo "${data_bytes}" > "data_bytes"
 
-(cd "${project}" && make)
+(cd "${project}" && GCC_FLAGS='-Werror' make)
 
 mv "${project}/run" run
 #rm -r "${project}"

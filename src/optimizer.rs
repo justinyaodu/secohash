@@ -59,7 +59,7 @@ fn unflatten_one(instrs: &[Instr], i: usize, subexpr_regs: &HashMap<usize, usize
     }
 }
 
-fn unflatten_many(instrs: &[Instr]) -> Vec<Expr> {
+pub fn unflatten_many(instrs: &[Instr]) -> Vec<Expr> {
     let mut refcounts = vec![0usize; instrs.len()];
     for instr in instrs {
         match *instr {
@@ -90,16 +90,11 @@ fn unflatten_many(instrs: &[Instr]) -> Vec<Expr> {
     exprs
 }
 
-pub fn optimize(instrs: &[Instr]) -> Vec<Expr> {
-    let top = remove_zero_shifts(unflatten_one(
-        instrs,
-        instrs.len() - 1,
-        &HashMap::new(),
-    ));
+pub fn optimize(instrs: &[Instr]) -> Vec<Instr> {
+    let top = remove_zero_shifts(unflatten_one(instrs, instrs.len() - 1, &HashMap::new()));
     let mut instrs = Vec::new();
     top.flatten(&mut instrs);
-    let instrs = eliminate_common_subexprs(&instrs);
-    unflatten_many(&instrs)
+    eliminate_common_subexprs(&instrs)
 }
 
 #[cfg(test)]
