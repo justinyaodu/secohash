@@ -31,7 +31,7 @@ impl ChooseGen {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::comb::Comb;
+    use crate::combinatorics::comb::Comb;
     use std::collections::HashSet;
 
     fn all_choices(mut gen: ChooseGen) -> Vec<Vec<usize>> {

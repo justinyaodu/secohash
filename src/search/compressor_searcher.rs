@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::{
+    combinatorics::ShiftGen,
     phf::{ExprBuilder, Interpreter, Phf, Reg},
-    shift_gen::ShiftGen,
 };
 
 fn table_size(index_bits: u32) -> usize {

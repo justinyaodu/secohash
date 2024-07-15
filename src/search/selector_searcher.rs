@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    choose_gen::ChooseGen,
+    combinatorics::ChooseGen,
     phf::{Phf, Reg},
-    selector::Selector,
+    search::selector::Selector,
 };
 
 pub fn selector_search(phf: &Phf) -> Option<(Phf, Vec<Reg>)> {

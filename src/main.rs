@@ -1,21 +1,16 @@
 mod backend;
-mod choose_gen;
-mod comb;
-mod compressor_searcher;
+mod combinatorics;
 mod frontend;
 mod optimizer;
 mod phf;
-mod selector;
-mod selector_searcher;
-mod shift_gen;
+mod search;
 
 use std::io;
 use std::io::BufRead;
 
 use backend::{Backend, CBackend};
-use compressor_searcher::compressor_search;
 use phf::Phf;
-use selector_searcher::selector_search;
+use search::search;
 
 fn main() {
     let mut stdin = io::stdin().lock();
@@ -29,10 +24,7 @@ fn main() {
     }
 
     let phf = Phf::new(&keys);
-    let (phf, sel_regs) = selector_search(&phf).expect("selector search failed");
-
-    let max_table_size = phf.keys.len() * 4;
-    let phf = compressor_search(&phf, &sel_regs, max_table_size).expect("compressor search failed");
+    let phf = search(&phf).expect("search failed");
 
     let c_code = CBackend::new().emit(&phf);
     println!("{}", c_code);

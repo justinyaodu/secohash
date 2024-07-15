@@ -49,7 +49,7 @@ impl Instr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     Reg(Reg),
     Imm(u32),

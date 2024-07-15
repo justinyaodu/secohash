@@ -42,7 +42,7 @@ impl ShiftGen {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::comb::Comb;
+    use crate::combinatorics::comb::Comb;
     use std::collections::HashSet;
 
     fn all_shifts(mut gen: ShiftGen) -> Vec<Vec<u32>> {
