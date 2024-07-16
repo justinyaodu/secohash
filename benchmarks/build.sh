@@ -3,6 +3,8 @@
 set -eu
 cd "$(dirname "${0}")"
 
+dataset_filter="${1:-}"
+
 (cd .. && cargo build)
 (cd utils && make)
 
@@ -13,6 +15,8 @@ mkdir "${bin}"
 for dataset in datasets/*.txt; do
   dataset="$(realpath "${dataset}")"
   dataset_name="$(basename "${dataset}" .txt)"
+
+  grep -Eq "${dataset_filter}" <<< "${dataset_name}" || continue
 
   for impl in impls/*.sh; do
     impl="$(realpath "${impl}")"

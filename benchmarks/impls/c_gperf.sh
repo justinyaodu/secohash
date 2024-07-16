@@ -14,6 +14,7 @@ gperf_cmd=(
   --includes
   --multiple-iterations=10
   --slot-name=key
+  --delimiters=$'\t'
 )
 
 {
@@ -25,9 +26,7 @@ EOF
 
 for (( i = 0; ; i++ )); do
   read -r key || break
-  cat << EOF
-${key},${i}
-EOF
+  printf "%s\t%s\n" "${key}" "${i}"
 done < "${1}"
 
 } | "${gperf_cmd[@]}" > "${project}/hasher.c"
