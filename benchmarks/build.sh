@@ -4,6 +4,7 @@ set -eu
 cd "$(dirname "${0}")"
 
 dataset_filter="${1:-}"
+impl_filter="${2:-}"
 
 (cd .. && cargo build)
 (cd utils && make)
@@ -19,6 +20,7 @@ for dataset in datasets/*.txt; do
   grep -Eq "${dataset_filter}" <<< "${dataset_name}" || continue
 
   for impl in impls/*.sh; do
+    grep -Eq "${impl_filter}" <<< "${impl}" || continue
     impl="$(realpath "${impl}")"
     impl_name="$(basename "${impl}" .sh)"
 

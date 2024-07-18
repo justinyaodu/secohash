@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    combinatorics::ShiftGen,
+    combinatorics::PermGen,
     phf::{ExprBuilder, Interpreter, Phf, Reg},
 };
 
@@ -13,112 +13,174 @@ fn table_index_mask(index_bits: u32) -> u32 {
     (table_size(index_bits) - 1) as u32
 }
 
-fn mix_search(phf: &Phf, interpreter: &Interpreter, sel_regs: &[Reg]) -> Option<Phf> {
-    let mut mask = !0;
-    let mut sol_shifts = None;
+struct Compressor {
+    hash_bits: u32,
+    mix_shifts: Vec<u32>,
+    base_shift_and_offset_table: Option<(u32, Vec<u8>)>,
+}
 
-    // Ensure that we always have at least one shift equal to 0. Otherwise the
-    // least significant bit of the mix is wasted, because it's always zero.
-    let max_nonzero_shifts = (sel_regs.len() - 1) as u32;
-    let mut mixes = HashSet::new();
-    'sol: for num_nonzero_shifts in 0..=max_nonzero_shifts {
-        let mut shift_gen = ShiftGen::new(sel_regs.len() as u32, num_nonzero_shifts, 31);
-        loop {
-            'shifts: {
-                loop {
-                    mixes.clear();
-                    for lane in 0..interpreter.width() {
-                        let mut mix = 0u32;
-                        for (&sel_reg, &shift) in sel_regs.iter().zip(shift_gen.shifts.iter()) {
-                            mix = mix.wrapping_add(interpreter.reg_values(sel_reg)[lane] << shift);
-                        }
-                        mix &= mask;
+pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
+    let interpreter = Interpreter::new(phf, &phf.interpreted_keys);
 
-                        if !mixes.insert(mix) {
-                            break 'shifts;
-                        }
+    let mut min_hash_bits = 1;
+    while 1 << min_hash_bits < phf.interpreted_keys.len() {
+        min_hash_bits += 1;
+    }
+    let mut compressor: Option<Compressor> = None;
+
+    let n = sel_regs.len();
+    let mut perm_gen = PermGen::new(n);
+    'perm: loop {
+        if perm_gen.next() > perm_gen.n {
+            break;
+        }
+
+        let mut shifts = vec![0];
+        let mut mixes = interpreter.reg_values(sel_regs[perm_gen.perm[0]]).to_vec();
+        'sel: for i in 1..n {
+            let mut shift = *shifts.last().unwrap();
+            'shift: while shift < 32 {
+                let mut seen = HashSet::new();
+                let mut new_mixes = Vec::new();
+                for (lane, mix) in mixes.iter().copied().enumerate() {
+                    let sel_value = interpreter.reg_values(sel_regs[perm_gen.perm[i]])[lane];
+                    let new_mix = mix + (sel_value << shift);
+                    new_mixes.push(new_mix);
+
+                    let mut mix_and_unmixed = vec![new_mix];
+                    for j in i + 1..n {
+                        mix_and_unmixed
+                            .push(interpreter.reg_values(sel_regs[perm_gen.perm[j]])[lane]);
                     }
-
-                    sol_shifts = Some(shift_gen.shifts.clone());
-                    mask >>= 1;
-                    if mask == 0 {
-                        break 'sol;
+                    if !seen.insert(mix_and_unmixed) {
+                        shift += 1;
+                        continue 'shift;
                     }
                 }
+
+                shifts.push(shift);
+                mixes = new_mixes;
+                continue 'sel;
             }
 
-            if !shift_gen.next() {
-                break;
+            continue 'perm;
+        }
+
+        let mut mix_shifts = vec![0; n];
+        for (i, index) in perm_gen.perm.iter().copied().enumerate() {
+            mix_shifts[index] = shifts[i];
+        }
+
+        if let Some(hash_bits) = direct_compressor_search(min_hash_bits, &compressor, &mixes) {
+            compressor = Some(Compressor {
+                hash_bits,
+                mix_shifts: mix_shifts.clone(),
+                base_shift_and_offset_table: None,
+            });
+        }
+
+        for base_shift in 0..32 {
+            if let Some((hash_bits, pair)) =
+                offset_compressor_search(min_hash_bits, &compressor, &mixes, base_shift)
+            {
+                compressor = Some(Compressor {
+                    hash_bits,
+                    mix_shifts: mix_shifts.clone(),
+                    base_shift_and_offset_table: Some(pair),
+                });
             }
         }
     }
 
-    let sol_shifts = sol_shifts?;
+    let compressor = compressor?;
 
     let mut phf = phf.clone();
     let e = ExprBuilder();
-    phf.push_expr(
+    let mix_reg = phf.push_expr(
         e.sum(
             sel_regs
                 .iter()
-                .zip(sol_shifts)
+                .zip(compressor.mix_shifts)
                 .map(|(&sel, left_shift)| e.shll(e.reg(sel), e.imm(left_shift)))
                 .collect(),
         ),
     );
+    let unmasked_hash_reg = match compressor.base_shift_and_offset_table {
+        Some((base_shift, offset_table)) => {
+            let offset_table = phf.push_data_table(offset_table);
+            phf.push_expr(e.add(
+                e.shrl(e.reg(mix_reg), e.imm(base_shift)),
+                e.table_get(
+                    offset_table,
+                    e.and(e.reg(mix_reg), e.table_index_mask(offset_table)),
+                ),
+            ))
+        }
+        None => mix_reg,
+    };
+    phf.push_expr(e.and(e.reg(unmasked_hash_reg), e.hash_mask()));
+    phf.build_hash_table(compressor.hash_bits);
     Some(phf)
 }
 
-fn mixed_offset_search(
-    phf: &Phf,
-    interpreter: &Interpreter,
-    sel_regs: &[Reg],
-    hash_bits: u32,
-) -> Option<Phf> {
-    let phf = mix_search(phf, interpreter, sel_regs);
-    let phf = phf?;
+fn direct_compressor_search(
+    min_hash_bits: u32,
+    compressor: &Option<Compressor>,
+    mixes: &[u32],
+) -> Option<u32> {
+    let mut seen = HashSet::new();
+    'hash_bits: for hash_bits in min_hash_bits..=32 {
+        if let Some(c) = compressor {
+            if c.hash_bits < hash_bits {
+                break;
+            }
+        }
 
-    let mix_reg = phf.last_reg();
-    let interpreter = Interpreter::new(&phf, &phf.interpreted_keys);
+        let mask = table_index_mask(hash_bits);
+        seen.clear();
+        for mix in mixes {
+            if !seen.insert(mix & mask) {
+                continue 'hash_bits;
+            }
+        }
+        return Some(hash_bits);
+    }
+    None
+}
 
-    for offset_index_bits in 1..=hash_bits {
-        let offset_index_mask = table_index_mask(offset_index_bits);
-        let offset_indices: Vec<u32> = interpreter
-            .reg_values(mix_reg)
-            .iter()
-            .map(|mix| mix & offset_index_mask)
-            .collect();
+fn offset_compressor_search(
+    min_hash_bits: u32,
+    compressor: &Option<Compressor>,
+    mixes: &[u32],
+    base_shift: u32,
+) -> Option<(u32, (u32, Vec<u8>))> {
+    let bases: Vec<u32> = mixes.iter().copied().map(|m| m >> base_shift).collect();
 
-        for base_shift in 0..32 {
-            let bases: Vec<u32> = interpreter
-                .reg_values(mix_reg)
-                .iter()
-                .map(|mix| mix >> base_shift)
-                .collect();
+    for hash_bits in min_hash_bits..=32 {
+        if let Some(c) = compressor {
+            if c.hash_bits <= hash_bits {
+                break;
+            }
+        }
 
-            let Some(offset_table) =
-                offset_table_search(&bases, &offset_indices, offset_index_bits, hash_bits)
-            else {
-                continue;
-            };
+        for offset_index_bits in 1..=hash_bits {
+            if let Some(c) = compressor {
+                if c.hash_bits == hash_bits {
+                    if let Some((_, offset_table)) = c.base_shift_and_offset_table.as_ref() {
+                        if offset_table.len() <= 1usize << offset_index_bits {
+                            break;
+                        }
+                    }
+                }
+            }
 
-            let mut phf = phf.clone();
-            let offset_table = phf.push_data_table(offset_table);
-            let e = ExprBuilder();
-            phf.push_expr(e.and(
-                e.add(
-                    e.shrl(e.reg(mix_reg), e.imm(base_shift)),
-                    e.table_get(
-                        offset_table,
-                        e.and(e.reg(mix_reg), e.table_index_mask(offset_table)),
-                    ),
-                ),
-                e.hash_mask(),
-            ));
-            return Some(phf);
+            if let Some(offset_table) =
+                offset_table_search(&bases, mixes, offset_index_bits, hash_bits)
+            {
+                return Some((hash_bits, (base_shift, offset_table)));
+            }
         }
     }
-
     None
 }
 
@@ -157,9 +219,10 @@ fn offset_table_search(
     seen[0] = true;
 
     let mut offset_table: Vec<u8> = vec![0; offset_table_size];
-    let offset_size = usize::min(hash_table_size, 128) as u8;
+    let offset_size = usize::min(hash_table_size, 256);
     'group: for (group, index) in groups_and_indices {
         'offset: for offset in 0..offset_size {
+            let offset = u8::try_from(offset).unwrap();
             for &base in &group {
                 let hash = (base.wrapping_add(offset.into()) & hash_mask) as usize;
                 if seen[hash] {
@@ -184,27 +247,4 @@ fn offset_table_search(
     }
 
     Some(offset_table)
-}
-
-pub fn compressor_search(phf: &Phf, sel_regs: &[Reg], max_table_size: usize) -> Option<Phf> {
-    let mut start_hash_bits: u32 = 1;
-    while (1 << start_hash_bits) < phf.keys.len() {
-        start_hash_bits += 1;
-    }
-
-    let mut end_hash_bits: u32 = start_hash_bits;
-    while (1 << end_hash_bits) <= max_table_size {
-        end_hash_bits += 1;
-    }
-
-    let interpreter = Interpreter::new(phf, &phf.interpreted_keys);
-
-    for hash_bits in start_hash_bits..end_hash_bits {
-        if let Some(mut phf) = mixed_offset_search(phf, &interpreter, sel_regs, hash_bits) {
-            phf.build_hash_table(hash_bits);
-            return Some(phf);
-        }
-    }
-
-    None
 }

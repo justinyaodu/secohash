@@ -17,6 +17,7 @@ gperf_cmd=(
   --delimiters=$'\t'
 )
 
+start_ns="$(date +'%s%N')"
 {
 
 cat << EOF
@@ -30,6 +31,9 @@ for (( i = 0; ; i++ )); do
 done < "${1}"
 
 } | "${gperf_cmd[@]}" > "${project}/hasher.c"
+end_ns="$(date +'%s%N')"
+
+python -c "print('gperf took', (${end_ns} - ${start_ns}) // 1000000, 'ms')" >&2
 
 cat >> "${project}/hasher.c" << EOF
 uint32_t lookup(const char *key, size_t len) {
@@ -56,7 +60,8 @@ data_bytes_short=$(
 )
 echo "$(( data_bytes_char + 2 * data_bytes_short ))" > "data_bytes"
 
-(cd "${project}" && GCC_FLAGS='-Wno-missing-field-initializers' make)
+GCC_FLAGS='-Wno-missing-field-initializers -Wno-unused-parameter'
+(cd "${project}" && GCC_FLAGS="${GCC_FLAGS}" make)
 
 mv "${project}/run" run
 #rm -r "${project}"

@@ -17,7 +17,9 @@ for dataset in datasets/*.txt; do
   echo -e "c_array\t${c_array_hash_table_size}"
 
   for impl_name in c_gperf c_seco; do
-    hash_table_size="$(cat "${bin}/${dataset_name}__${impl_name}/hash_table_size")"
+    file="${bin}/${dataset_name}__${impl_name}/hash_table_size"
+    [ -f "${file}" ] || continue
+    hash_table_size="$(cat "${file}")"
     ratio="$(python -c "print(f'{${hash_table_size} / ${c_array_hash_table_size}:.3}')")"
     echo -e "${impl_name}\t${hash_table_size} (${ratio}x)"
   done
@@ -25,7 +27,9 @@ for dataset in datasets/*.txt; do
   echo
   echo "data_bytes:"
   for impl_name in c_gperf c_seco; do
-    data_bytes="$(cat "${bin}/${dataset_name}__${impl_name}/data_bytes")"
+    file="${bin}/${dataset_name}__${impl_name}/data_bytes"
+    [ -f "${file}" ] || continue
+    data_bytes="$(cat "${file}")"
     echo -e "${impl_name}\t${data_bytes}"
   done
 done
