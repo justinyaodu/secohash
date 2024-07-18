@@ -63,7 +63,7 @@ fn basic_search(phf: &Phf) -> Option<Vec<Selector>> {
         selectors_2.push(Selector::Shrl(i));
     }
 
-    for num_choices in 1..=3 {
+    for num_choices in 1..=4 {
         for selectors in [&selectors_1, &selectors_2] {
             if num_choices > selectors.len() {
                 continue;
