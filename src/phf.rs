@@ -173,6 +173,7 @@ pub struct Phf {
     pub instrs: Vec<Instr>,
     pub data_tables: Vec<Vec<u8>>,
     pub hash_table: Option<Vec<Vec<u32>>>,
+    pub min_hash_bits: u32,
 }
 
 impl Phf {
@@ -183,12 +184,13 @@ impl Phf {
             interpreted_keys.push(vec!['!' as u32]);
         }
 
-        let min_nonzero_key_len = interpreted_keys
-            .iter()
-            .map(Vec::len)
-            .filter(|&n| n > 0)
-            .min()
-            .unwrap();
+        let min_hash_table_size = interpreted_keys.len() + 1;
+        let mut min_hash_bits = 1;
+        while 1usize << min_hash_bits < min_hash_table_size {
+            min_hash_bits += 1;
+        }
+
+        let min_nonzero_key_len = interpreted_keys.iter().map(Vec::len).min().unwrap();
         let max_key_len = interpreted_keys.iter().map(Vec::len).max().unwrap();
 
         Phf {
@@ -199,6 +201,7 @@ impl Phf {
             instrs: Vec::new(),
             data_tables: Vec::new(),
             hash_table: None,
+            min_hash_bits,
         }
     }
 

@@ -22,10 +22,6 @@ struct Compressor {
 pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
     let interpreter = Interpreter::new(phf, &phf.interpreted_keys);
 
-    let mut min_hash_bits = 1;
-    while 1 << min_hash_bits < phf.interpreted_keys.len() {
-        min_hash_bits += 1;
-    }
     let mut compressor: Option<Compressor> = None;
 
     let n = sel_regs.len();
@@ -71,7 +67,7 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
             mix_shifts[index] = shifts[i];
         }
 
-        if let Some(hash_bits) = direct_compressor_search(min_hash_bits, &compressor, &mixes) {
+        if let Some(hash_bits) = direct_compressor_search(phf.min_hash_bits, &compressor, &mixes) {
             compressor = Some(Compressor {
                 hash_bits,
                 mix_shifts: mix_shifts.clone(),
@@ -79,9 +75,14 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
             });
         }
 
+        let or_of_all_mixes = mixes.iter().copied().fold(0, |a, b| a | b);
         for base_shift in 0..32 {
+            if or_of_all_mixes >> base_shift == 0 {
+                break;
+            }
+
             if let Some((hash_bits, pair)) =
-                offset_compressor_search(min_hash_bits, &compressor, &mixes, base_shift)
+                offset_compressor_search(phf.min_hash_bits, &compressor, &mixes, base_shift)
             {
                 compressor = Some(Compressor {
                     hash_bits,
@@ -90,6 +91,10 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
                 });
             }
         }
+
+        // TODO: this makes the search a lot faster and is usually just as good,
+        // but it should be configurable.
+        break;
     }
 
     let compressor = compressor?;
