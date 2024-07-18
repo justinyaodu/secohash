@@ -1,15 +1,21 @@
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <stdio.h>
 
 #include "hasher.cpp"
 
 int main() {
-    std::ios::sync_with_stdio(false);
     init();
+    char* line = NULL;
+    size_t line_size = 0;
+    ssize_t len;
     uint32_t total = 0;
-    for (std::string line; std::getline(std::cin, line);) {
-        total += lookup(line);
+    while ((len = getline(&line, &line_size, stdin)) != -1) {
+        len--;
+        line[len] = '\0';
+        total += lookup(std::string_view(line, len));
     }
     std::cout << total << std::endl;
 }

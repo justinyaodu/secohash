@@ -12,7 +12,7 @@ cat << EOF
 #include <string>
 #include <unordered_map>
 
-std::unordered_map<std::string, uint32_t> map;
+std::unordered_map<std::string_view, uint32_t> map;
 
 void init() {
 EOF
@@ -29,7 +29,7 @@ echo 0 > "data_bytes"
 cat << EOF
 };
 
-uint32_t lookup(const std::string& str) {
+uint32_t lookup(std::string_view str) {
     auto found = map.find(str);
     if (found != map.end()) {
         return found->second;
