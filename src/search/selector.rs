@@ -23,16 +23,16 @@ impl Selector {
     }
 
     pub fn compile(&self, phf: &mut Phf) -> Reg {
-        let e = ExprBuilder();
+        let x = ExprBuilder();
         let expr = match *self {
-            Selector::Index(i) => e.str_get(e.imm(i.try_into().unwrap())),
-            Selector::Sub(k) => e.str_get(e.sub(e.str_len(), e.imm(k.try_into().unwrap()))),
-            Selector::And(k) => e.str_get(e.and(e.str_len(), e.imm(k.try_into().unwrap()))),
-            Selector::Shrl(k) => e.str_get(e.shrl(e.str_len(), e.imm(k))),
-            Selector::Len => e.str_len(),
+            Selector::Index(i) => x.str_get(x.imm(i.try_into().unwrap())),
+            Selector::Sub(k) => x.str_get(x.sub(x.str_len(), x.imm(k.try_into().unwrap()))),
+            Selector::And(k) => x.str_get(x.and(x.str_len(), x.imm(k.try_into().unwrap()))),
+            Selector::Shrl(k) => x.str_get(x.shrl(x.str_len(), x.imm(k))),
+            Selector::Len => x.str_len(),
             Selector::Table(ref t) => {
                 let t = phf.push_data_table(t.to_vec());
-                e.str_get(e.table_get(t, e.str_len()))
+                x.str_get(x.table_get(t, x.str_len()))
             }
         };
         phf.push_expr(expr)

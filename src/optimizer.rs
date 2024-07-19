@@ -43,15 +43,15 @@ fn unflatten_one(instrs: &[Instr], i: usize, subexpr_regs: &HashMap<usize, usize
     if let Some(r) = subexpr_regs.get(&i).cloned() {
         return Expr::Reg(Reg(r));
     }
-    let e = ExprBuilder();
+    let x = ExprBuilder();
     match instrs[i] {
-        Instr::Imm(n) => e.imm(n),
-        Instr::StrGet(r) => e.str_get(unflatten_one(instrs, r.0, subexpr_regs)),
-        Instr::StrLen => e.str_len(),
-        Instr::TableGet(t, r) => e.table_get(t, unflatten_one(instrs, r.0, subexpr_regs)),
-        Instr::TableIndexMask(t) => e.table_index_mask(t),
-        Instr::HashMask => e.hash_mask(),
-        Instr::BinOp(op, a, b) => e.bin_op(
+        Instr::Imm(n) => x.imm(n),
+        Instr::StrGet(r) => x.str_get(unflatten_one(instrs, r.0, subexpr_regs)),
+        Instr::StrLen => x.str_len(),
+        Instr::TableGet(t, r) => x.table_get(t, unflatten_one(instrs, r.0, subexpr_regs)),
+        Instr::TableIndexMask(t) => x.table_index_mask(t),
+        Instr::HashMask => x.hash_mask(),
+        Instr::BinOp(op, a, b) => x.bin_op(
             op,
             unflatten_one(instrs, a.0, subexpr_regs),
             unflatten_one(instrs, b.0, subexpr_regs),
@@ -105,13 +105,13 @@ mod test {
 
     #[test]
     fn test_remove_zero_shifts() {
-        let b = ExprBuilder();
+        let x = ExprBuilder();
         assert_eq!(
-            remove_zero_shifts(b.sum(vec![
-                b.shll(b.imm(0), b.imm(2)),
-                b.shll(b.shrl(b.hash_mask(), b.imm(0)), b.imm(0))
+            remove_zero_shifts(x.sum(vec![
+                x.shll(x.imm(0), x.imm(2)),
+                x.shll(x.shrl(x.hash_mask(), x.imm(0)), x.imm(0))
             ])),
-            b.sum(vec![b.shll(b.imm(0), b.imm(2)), b.hash_mask()])
+            x.sum(vec![x.shll(x.imm(0), x.imm(2)), x.hash_mask()])
         )
     }
 

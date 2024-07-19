@@ -100,30 +100,30 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
     let compressor = compressor?;
 
     let mut phf = phf.clone();
-    let e = ExprBuilder();
+    let x = ExprBuilder();
     let mix_reg = phf.push_expr(
-        e.sum(
+        x.sum(
             sel_regs
                 .iter()
                 .zip(compressor.mix_shifts)
-                .map(|(&sel, left_shift)| e.shll(e.reg(sel), e.imm(left_shift)))
+                .map(|(&sel, left_shift)| x.shll(x.reg(sel), x.imm(left_shift)))
                 .collect(),
         ),
     );
     let unmasked_hash_reg = match compressor.base_shift_and_offset_table {
         Some((base_shift, offset_table)) => {
             let offset_table = phf.push_data_table(offset_table);
-            phf.push_expr(e.add(
-                e.shrl(e.reg(mix_reg), e.imm(base_shift)),
-                e.table_get(
+            phf.push_expr(x.add(
+                x.shrl(x.reg(mix_reg), x.imm(base_shift)),
+                x.table_get(
                     offset_table,
-                    e.and(e.reg(mix_reg), e.table_index_mask(offset_table)),
+                    x.and(x.reg(mix_reg), x.table_index_mask(offset_table)),
                 ),
             ))
         }
         None => mix_reg,
     };
-    phf.push_expr(e.and(e.reg(unmasked_hash_reg), e.hash_mask()));
+    phf.push_expr(x.and(x.reg(unmasked_hash_reg), x.hash_mask()));
     phf.build_hash_table(compressor.hash_bits);
     Some(phf)
 }
