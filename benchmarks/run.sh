@@ -18,8 +18,6 @@ for dataset in datasets/*.txt; do
   grep -Eq "${dataset_filter}" <<< "${dataset_name}" || continue
 
   shuffled="${results}/${dataset_name}_${n}.txt"
-  utils/bin/shuffler "${n}" < "${dataset}" > "${shuffled}"
-
   hyperfine_cmd=(
     hyperfine
     --shell none
@@ -28,6 +26,7 @@ for dataset in datasets/*.txt; do
     --export-json "${results}/${dataset_name}.json"
   )
 
+  impl_count=0
   for impl in impls/*.sh; do
     #grep -q 'control' <<< "${impl}" && continue
     grep -Eq "${impl_filter}" <<< "${impl}" || continue
@@ -35,7 +34,11 @@ for dataset in datasets/*.txt; do
     bench_run="${bin}/${dataset_name}__${impl_name}/run"
     [ -f "${bench_run}" ] || continue
     hyperfine_cmd+=("${bench_run}")
+    (( ++impl_count ))
   done
+  (( impl_count )) || continue
+
+  utils/bin/shuffler "${n}" < "${dataset}" > "${shuffled}"
 
   "${hyperfine_cmd[@]}"
 
