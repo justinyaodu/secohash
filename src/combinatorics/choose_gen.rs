@@ -1,7 +1,9 @@
+use super::LendingIterator;
+
 pub struct ChooseGen {
-    pub n: usize,
-    pub k: usize,
-    pub choices: Vec<usize>,
+    n: usize,
+    k: usize,
+    choices: Vec<usize>,
 }
 
 impl ChooseGen {
@@ -11,13 +13,21 @@ impl ChooseGen {
         choices.push(usize::MAX);
         ChooseGen { n, k, choices }
     }
+}
 
-    pub fn next(&mut self) -> bool {
-        let ChooseGen { n, k, ref mut choices } = *self;
+impl LendingIterator for ChooseGen {
+    type Item<'a> = &'a [usize];
+
+    fn next(&mut self) -> Option<Self::Item<'_>> {
+        let Self {
+            n,
+            k,
+            ref mut choices,
+        } = *self;
 
         if choices.len() != k {
             choices.pop();
-            return true;
+            return Some(&self.choices);
         }
 
         let mut i = k;
@@ -27,11 +37,11 @@ impl ChooseGen {
                 for i in i..k {
                     choices[i] = choices[i - 1] + 1;
                 }
-                return true;
+                return Some(&self.choices);
             }
             i -= 1;
         }
-        false
+        None
     }
 }
 
@@ -42,11 +52,11 @@ mod test {
     use std::collections::HashSet;
 
     fn all_choices(mut gen: ChooseGen) -> Vec<Vec<usize>> {
-        let mut choices = Vec::new();
-        while gen.next() {
-            choices.push(gen.choices.clone());
+        let mut all = Vec::new();
+        while let Some(choices) = gen.next() {
+            all.push(choices.to_vec());
         }
-        choices
+        all
     }
 
     #[test]

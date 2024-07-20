@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    combinatorics::PermGen,
+    combinatorics::{LendingIterator, PermGen},
     phf::{ExprBuilder, Interpreter, Phf, Reg},
 };
 
@@ -26,27 +26,23 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
 
     let n = sel_regs.len();
     let mut perm_gen = PermGen::new(n);
-    'perm: loop {
-        if perm_gen.next() > perm_gen.n {
-            break;
-        }
-
+    'perm: while let Some(perm) = perm_gen.next() {
         let mut shifts = vec![0];
-        let mut mixes = interpreter.reg_values(sel_regs[perm_gen.perm[0]]).to_vec();
+        let mut mixes = interpreter.reg_values(sel_regs[perm[0]]).to_vec();
         'sel: for i in 1..n {
             let mut shift = *shifts.last().unwrap();
             'shift: while shift < 32 {
                 let mut seen = HashSet::new();
                 let mut new_mixes = Vec::new();
                 for (lane, mix) in mixes.iter().copied().enumerate() {
-                    let sel_value = interpreter.reg_values(sel_regs[perm_gen.perm[i]])[lane];
+                    let sel_value = interpreter.reg_values(sel_regs[perm[i]])[lane];
                     let new_mix = mix + (sel_value << shift);
                     new_mixes.push(new_mix);
 
                     let mut mix_and_unmixed = vec![new_mix];
                     for j in i + 1..n {
                         mix_and_unmixed
-                            .push(interpreter.reg_values(sel_regs[perm_gen.perm[j]])[lane]);
+                            .push(interpreter.reg_values(sel_regs[perm[j]])[lane]);
                     }
                     if !seen.insert(mix_and_unmixed) {
                         shift += 1;
@@ -63,7 +59,7 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
         }
 
         let mut mix_shifts = vec![0; n];
-        for (i, index) in perm_gen.perm.iter().copied().enumerate() {
+        for (i, index) in perm.iter().copied().enumerate() {
             mix_shifts[index] = shifts[i];
         }
 

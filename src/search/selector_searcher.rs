@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    combinatorics::ChooseGen,
+    combinatorics::{ChooseGen, LendingIterator},
     phf::{Phf, Reg},
     search::selector::Selector,
 };
@@ -122,9 +122,8 @@ fn find_distinguishing_selectors(
     let n = selectors.len();
     assert!(n >= k);
     let mut choose_gen = ChooseGen::new(n, k);
-    while choose_gen.next() {
-        let chosen: Vec<Selector> = choose_gen
-            .choices
+    while let Some(choices) = choose_gen.next() {
+        let chosen: Vec<Selector> = choices
             .iter()
             .map(|&i| selectors[i].clone())
             .collect();

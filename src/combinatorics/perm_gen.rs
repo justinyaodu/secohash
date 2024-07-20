@@ -1,6 +1,8 @@
+use super::LendingIterator;
+
 pub struct PermGen {
-    pub n: usize,
-    pub perm: Vec<usize>,
+    n: usize,
+    perm: Vec<usize>,
 }
 
 impl PermGen {
@@ -9,13 +11,17 @@ impl PermGen {
         perm.push(usize::MAX);
         PermGen { n, perm }
     }
+}
 
-    pub fn next(&mut self) -> usize {
+impl LendingIterator for PermGen {
+    type Item<'a> = &'a [usize];
+
+    fn next(&mut self) -> Option<Self::Item<'_>> {
         let PermGen { n, ref mut perm } = *self;
 
         if perm.len() != n {
             perm.pop();
-            return n;
+            return Some(&self.perm);
         }
 
         let mut tail_len = 1;
@@ -26,7 +32,7 @@ impl PermGen {
             tail_len += 1;
         }
         if tail_len >= n {
-            return n + 1;
+            return None;
         }
 
         let swap_left = n - 1 - tail_len;
@@ -37,7 +43,7 @@ impl PermGen {
 
         perm.swap(swap_left, swap_right);
         perm[swap_left + 1..].reverse();
-        tail_len + 1
+        Some(&self.perm)
     }
 }
 
@@ -46,14 +52,10 @@ mod test {
     use super::*;
     use std::collections::HashSet;
 
-    fn all_perms_and_change_counts(mut gen: PermGen) -> Vec<(Vec<usize>, usize)> {
+    fn all_perms(mut gen: PermGen) -> Vec<Vec<usize>> {
         let mut all = Vec::new();
-        loop {
-            let change_count = gen.next();
-            if change_count > gen.n {
-                break;
-            }
-            all.push((gen.perm.clone(), change_count));
+        while let Some(perm) = gen.next() {
+            all.push(perm.to_vec());
         }
         all
     }
@@ -61,38 +63,38 @@ mod test {
     #[test]
     fn test_0() {
         assert_eq!(
-            all_perms_and_change_counts(PermGen::new(0)),
-            vec![(Vec::new(), 0)]
+            all_perms(PermGen::new(0)),
+            vec![Vec::new()]
         )
     }
 
     #[test]
     fn test_1() {
         assert_eq!(
-            all_perms_and_change_counts(PermGen::new(1)),
-            vec![(vec![0], 1)]
+            all_perms(PermGen::new(1)),
+            vec![vec![0]]
         )
     }
 
     #[test]
     fn test_2() {
         assert_eq!(
-            all_perms_and_change_counts(PermGen::new(2)),
-            vec![(vec![0, 1], 2), (vec![1, 0], 2)]
+            all_perms(PermGen::new(2)),
+            vec![vec![0, 1], vec![1, 0]]
         )
     }
 
     #[test]
     fn test_3() {
         assert_eq!(
-            all_perms_and_change_counts(PermGen::new(3)),
+            all_perms(PermGen::new(3)),
             vec![
-                (vec![0, 1, 2], 3),
-                (vec![0, 2, 1], 2),
-                (vec![1, 0, 2], 3),
-                (vec![1, 2, 0], 2),
-                (vec![2, 0, 1], 3),
-                (vec![2, 1, 0], 2),
+                vec![0, 1, 2],
+                vec![0, 2, 1],
+                vec![1, 0, 2],
+                vec![1, 2, 0],
+                vec![2, 0, 1],
+                vec![2, 1, 0],
             ]
         )
     }
@@ -100,32 +102,32 @@ mod test {
     #[test]
     fn test_4() {
         assert_eq!(
-            all_perms_and_change_counts(PermGen::new(4)),
+            all_perms(PermGen::new(4)),
             vec![
-                (vec![0, 1, 2, 3], 4),
-                (vec![0, 1, 3, 2], 2),
-                (vec![0, 2, 1, 3], 3),
-                (vec![0, 2, 3, 1], 2),
-                (vec![0, 3, 1, 2], 3),
-                (vec![0, 3, 2, 1], 2),
-                (vec![1, 0, 2, 3], 4),
-                (vec![1, 0, 3, 2], 2),
-                (vec![1, 2, 0, 3], 3),
-                (vec![1, 2, 3, 0], 2),
-                (vec![1, 3, 0, 2], 3),
-                (vec![1, 3, 2, 0], 2),
-                (vec![2, 0, 1, 3], 4),
-                (vec![2, 0, 3, 1], 2),
-                (vec![2, 1, 0, 3], 3),
-                (vec![2, 1, 3, 0], 2),
-                (vec![2, 3, 0, 1], 3),
-                (vec![2, 3, 1, 0], 2),
-                (vec![3, 0, 1, 2], 4),
-                (vec![3, 0, 2, 1], 2),
-                (vec![3, 1, 0, 2], 3),
-                (vec![3, 1, 2, 0], 2),
-                (vec![3, 2, 0, 1], 3),
-                (vec![3, 2, 1, 0], 2),
+                vec![0, 1, 2, 3],
+                vec![0, 1, 3, 2],
+                vec![0, 2, 1, 3],
+                vec![0, 2, 3, 1],
+                vec![0, 3, 1, 2],
+                vec![0, 3, 2, 1],
+                vec![1, 0, 2, 3],
+                vec![1, 0, 3, 2],
+                vec![1, 2, 0, 3],
+                vec![1, 2, 3, 0],
+                vec![1, 3, 0, 2],
+                vec![1, 3, 2, 0],
+                vec![2, 0, 1, 3],
+                vec![2, 0, 3, 1],
+                vec![2, 1, 0, 3],
+                vec![2, 1, 3, 0],
+                vec![2, 3, 0, 1],
+                vec![2, 3, 1, 0],
+                vec![3, 0, 1, 2],
+                vec![3, 0, 2, 1],
+                vec![3, 1, 0, 2],
+                vec![3, 1, 2, 0],
+                vec![3, 2, 0, 1],
+                vec![3, 2, 1, 0],
             ]
         )
     }
@@ -139,7 +141,7 @@ mod test {
     }
 
     fn validate(n: usize) {
-        let all = all_perms_and_change_counts(PermGen::new(n));
+        let all = all_perms(PermGen::new(n));
 
         assert_eq!(
             all,
@@ -157,16 +159,7 @@ mod test {
             "not distinct"
         );
 
-        for (i, &(ref perm, change_count)) in all.iter().enumerate() {
-            if i == 0 {
-                assert!(change_count == n);
-            } else {
-                let split = n - change_count;
-                let prev_perm = &all[i - 1].0;
-                assert_eq!(perm[..split], prev_perm[..split]);
-                assert_ne!(perm[split], prev_perm[split]);
-            }
-
+        for perm in &all {
             assert_eq!(
                 {
                     let mut sorted = perm.clone();
