@@ -11,31 +11,33 @@ impl PermGen {
     }
 
     pub fn next(&mut self) -> usize {
-        if self.perm.len() != self.n {
-            self.perm.pop();
-            return self.n;
+        let PermGen { n, ref mut perm } = *self;
+
+        if perm.len() != n {
+            perm.pop();
+            return n;
         }
 
-        if self.n == 0 {
-            return self.n + 1;
+        let mut tail_len = 1;
+        while tail_len < n {
+            if perm[n - tail_len - 1] < perm[n - tail_len] {
+                break;
+            }
+            tail_len += 1;
+        }
+        if tail_len >= n {
+            return n + 1;
         }
 
-        let mut i = self.perm.len() - 1;
-        while i >= 1 && self.perm[i - 1] > self.perm[i] {
-            i -= 1;
-        }
-        if i == 0 {
-            return self.n + 1;
+        let swap_left = n - 1 - tail_len;
+        let mut swap_right = n - 1;
+        while perm[swap_right] < perm[swap_left] {
+            swap_right -= 1;
         }
 
-        let mut j = self.perm.len() - 1;
-        while self.perm[j] < self.perm[i - 1] {
-            j -= 1;
-        }
-
-        self.perm.swap(i - 1, j);
-        self.perm[i..].reverse();
-        self.perm.len() - (i - 1)
+        perm.swap(swap_left, swap_right);
+        perm[swap_left + 1..].reverse();
+        tail_len + 1
     }
 }
 

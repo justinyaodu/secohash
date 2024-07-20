@@ -1,28 +1,35 @@
 pub struct ChooseGen {
     pub n: usize,
+    pub k: usize,
     pub choices: Vec<usize>,
 }
 
 impl ChooseGen {
     pub fn new(n: usize, k: usize) -> ChooseGen {
         assert!(k <= n);
-        ChooseGen {
-            n,
-            choices: (0..k).collect(),
-        }
+        let mut choices: Vec<usize> = (0..k).collect();
+        choices.push(usize::MAX);
+        ChooseGen { n, k, choices }
     }
 
     pub fn next(&mut self) -> bool {
-        let mut end = self.choices.len();
-        while end > 0 {
-            self.choices[end - 1] += 1;
-            if self.choices[end - 1] < self.n - (self.choices.len() - end) {
-                for i in end..self.choices.len() {
-                    self.choices[i] = self.choices[i - 1] + 1;
+        let ChooseGen { n, k, ref mut choices } = *self;
+
+        if choices.len() != k {
+            choices.pop();
+            return true;
+        }
+
+        let mut i = k;
+        while i > 0 {
+            choices[i - 1] += 1;
+            if choices[i - 1] + k - i < n {
+                for i in i..k {
+                    choices[i] = choices[i - 1] + 1;
                 }
                 return true;
             }
-            end -= 1;
+            i -= 1;
         }
         false
     }
@@ -36,11 +43,8 @@ mod test {
 
     fn all_choices(mut gen: ChooseGen) -> Vec<Vec<usize>> {
         let mut choices = Vec::new();
-        loop {
+        while gen.next() {
             choices.push(gen.choices.clone());
-            if !gen.next() {
-                break;
-            }
         }
         choices
     }

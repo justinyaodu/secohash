@@ -122,7 +122,7 @@ fn find_distinguishing_selectors(
     let n = selectors.len();
     assert!(n >= k);
     let mut choose_gen = ChooseGen::new(n, k);
-    loop {
+    while choose_gen.next() {
         let chosen: Vec<Selector> = choose_gen
             .choices
             .iter()
@@ -131,11 +131,8 @@ fn find_distinguishing_selectors(
         if is_solution(keys, &chosen) {
             return Some(chosen);
         }
-
-        if !choose_gen.next() {
-            return None;
-        }
     }
+    None
 }
 
 fn is_solution(keys: &[Vec<u32>], selectors: &[Selector]) -> bool {
