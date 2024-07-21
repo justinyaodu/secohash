@@ -63,9 +63,8 @@ impl CBackend {
     fn precedence(op: Option<BinOp>) -> usize {
         match op {
             None => 0,
-            Some(BinOp::Mul) => 1,
-            Some(BinOp::Add | BinOp::Sub | BinOp::And | BinOp::Xor) => 2,
-            Some(BinOp::Shll | BinOp::Shrl) => 3,
+            Some(BinOp::Add | BinOp::Sub | BinOp::And) => 1,
+            Some(BinOp::Shll | BinOp::Shrl) => 2,
         }
     }
 
@@ -87,9 +86,7 @@ impl CBackend {
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",
-                    BinOp::Mul => "*",
                     BinOp::And => "&",
-                    BinOp::Xor => "^",
                     BinOp::Shll => "<<",
                     BinOp::Shrl => ">>",
                 };

@@ -14,7 +14,7 @@ impl Comb {
             let mut next_row = Vec::new();
             next_row.push(1);
             for next_k in 1..next_n {
-                next_row.push(self.0[next_n - 1][next_k - 1] + self.0[next_n - 1][next_k])
+                next_row.push(self.0[next_n - 1][next_k - 1] + self.0[next_n - 1][next_k]);
             }
             next_row.push(1);
             self.0.push(next_row);

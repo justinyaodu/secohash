@@ -10,9 +10,7 @@ pub struct Table(pub usize);
 pub enum BinOp {
     Add,
     Sub,
-    Mul,
     And,
-    Xor,
     Shll,
     Shrl,
 }
@@ -20,13 +18,8 @@ pub enum BinOp {
 impl BinOp {
     pub fn commutative(&self) -> bool {
         match self {
-            BinOp::Add => true,
-            BinOp::Sub => false,
-            BinOp::Mul => true,
-            BinOp::And => true,
-            BinOp::Xor => true,
-            BinOp::Shll => false,
-            BinOp::Shrl => false,
+            BinOp::Add | BinOp::And => true,
+            BinOp::Sub | BinOp::Shll | BinOp::Shrl => false,
         }
     }
 }
@@ -305,9 +298,7 @@ impl Interpreter {
                         match op {
                             BinOp::Add => a.wrapping_add(b),
                             BinOp::Sub => a.wrapping_sub(b),
-                            BinOp::Mul => a.wrapping_mul(b),
                             BinOp::And => a & b,
-                            BinOp::Xor => a ^ b,
                             BinOp::Shll => a << b,
                             BinOp::Shrl => a >> b,
                         }
