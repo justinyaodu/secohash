@@ -19,7 +19,7 @@ pub fn selector_search(spec: &Spec) -> Option<SelectorSearchSolution> {
         return sol;
     }
 
-    table_search_2(spec)
+    table_search(spec)
 }
 
 fn basic_search(spec: &Spec) -> Option<SelectorSearchSolution> {
@@ -84,7 +84,7 @@ fn basic_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     None
 }
 
-fn table_search_2(spec: &Spec) -> Option<SelectorSearchSolution> {
+fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
     for key in &spec.interpreted_keys {
         keys_by_len.entry(key.len()).or_default().push(key.clone())
@@ -119,16 +119,12 @@ fn table_search_2(spec: &Spec) -> Option<SelectorSearchSolution> {
                 regs.push(Reg(i));
                 i += instrs_per_index_selector;
             }
-            let regs: Vec<Reg> = (0..len)
-                .map(|i| Reg((i + 1) * instrs_per_index_selector - 1))
-                .collect();
-            let Some(chosen) = find_distinguishing_regs(trace, &regs, num_tables) else {
+            let num_choices = usize::min(num_tables, regs.len());
+            let Some(chosen) = find_distinguishing_regs(trace, &regs, num_choices) else {
                 continue 'num_tables;
             };
-            for i in 0..num_tables {
-                raw_tables[i][len] = (chosen[i].0 / instrs_per_index_selector)
-                    .try_into()
-                    .unwrap();
+            for (i, choice) in chosen.iter().enumerate() {
+                raw_tables[i][len] = (choice.0 / instrs_per_index_selector).try_into().unwrap();
             }
         }
 
@@ -149,10 +145,8 @@ fn table_search_2(spec: &Spec) -> Option<SelectorSearchSolution> {
     None
 }
 
-fn find_distinguishing_regs(trace: &Trace, regs: &[Reg], k: usize) -> Option<Vec<Reg>> {
-    let n = regs.len();
-    assert!(k <= n);
-    let mut choose_gen = ChooseGen::new(n, k);
+fn find_distinguishing_regs(trace: &Trace, regs: &[Reg], num_choices: usize) -> Option<Vec<Reg>> {
+    let mut choose_gen = ChooseGen::new(regs.len(), num_choices);
     let mut seen = HashSet::new();
     'choices: while let Some(choice_indices) = choose_gen.next() {
         let choices: Vec<Reg> = choice_indices.iter().map(|&i| regs[i]).collect();
