@@ -1,16 +1,17 @@
 mod backend;
 mod combinatorics;
 mod frontend;
-mod optimizer;
-mod phf;
+mod ir;
 mod search;
+mod spec;
+mod util;
 
 use std::io;
 use std::io::BufRead;
 
 use backend::{Backend, CBackend};
-use phf::Phf;
 use search::search;
+use spec::Spec;
 
 fn main() {
     let mut stdin = io::stdin().lock();
@@ -23,9 +24,9 @@ fn main() {
         keys.push(line.trim().bytes().map(|c| c.into()).collect());
     }
 
-    let phf = Phf::new(&keys);
-    let phf = search(&phf).expect("search failed");
+    let spec = Spec::new(keys);
+    let phf = search(&spec).expect("search failed");
 
-    let c_code = CBackend::new().emit(&phf);
+    let c_code = CBackend::new().emit(&spec, &phf);
     println!("{}", c_code);
 }

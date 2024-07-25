@@ -2,15 +2,17 @@ use std::collections::HashSet;
 
 use crate::{
     combinatorics::{LendingIterator, PermGen},
-    phf::{ExprBuilder, Interpreter, Phf, Reg},
+    ir::{ExprBuilder, Tables, Tac, Trace},
+    spec::Spec,
+    util::{table_index_mask, table_size},
 };
 
-fn table_size(index_bits: u32) -> usize {
-    1 << index_bits
-}
+use super::selector_searcher::SelectorSearchSolution;
 
-fn table_index_mask(index_bits: u32) -> u32 {
-    (table_size(index_bits) - 1) as u32
+pub struct CompressorSearchSolution {
+    pub tac: Tac,
+    pub tables: Tables,
+    pub hash_bits: u32,
 }
 
 struct Compressor {
@@ -19,8 +21,15 @@ struct Compressor {
     base_shift_and_offset_table: Option<(u32, Vec<u8>)>,
 }
 
-pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
-    let interpreter = Interpreter::new(phf, &phf.interpreted_keys);
+pub fn compressor_search(
+    spec: &Spec,
+    SelectorSearchSolution {
+        mut tac,
+        mut tables,
+        sel_regs,
+    }: SelectorSearchSolution,
+) -> Option<CompressorSearchSolution> {
+    let trace = Trace::new(&spec.interpreted_keys, &tac, &tables, None);
 
     let mut compressor: Option<Compressor> = None;
 
@@ -28,21 +37,20 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
     let mut perm_gen = PermGen::new(n);
     'perm: while let Some(perm) = perm_gen.next() {
         let mut shifts = vec![0];
-        let mut mixes = interpreter.reg_values(sel_regs[perm[0]]).to_vec();
+        let mut mixes = trace[sel_regs[perm[0]]].to_vec();
         'sel: for i in 1..n {
             let mut shift = *shifts.last().unwrap();
             'shift: while shift < 32 {
                 let mut seen = HashSet::new();
                 let mut new_mixes = Vec::new();
                 for (lane, mix) in mixes.iter().copied().enumerate() {
-                    let sel_value = interpreter.reg_values(sel_regs[perm[i]])[lane];
+                    let sel_value = trace[sel_regs[perm[i]]][lane];
                     let new_mix = mix + (sel_value << shift);
                     new_mixes.push(new_mix);
 
                     let mut mix_and_unmixed = vec![new_mix];
                     for j in i + 1..n {
-                        mix_and_unmixed
-                            .push(interpreter.reg_values(sel_regs[perm[j]])[lane]);
+                        mix_and_unmixed.push(trace[sel_regs[perm[j]]][lane]);
                     }
                     if !seen.insert(mix_and_unmixed) {
                         shift += 1;
@@ -63,7 +71,7 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
             mix_shifts[index] = shifts[i];
         }
 
-        if let Some(hash_bits) = direct_compressor_search(phf.min_hash_bits, &compressor, &mixes) {
+        if let Some(hash_bits) = direct_compressor_search(spec.min_hash_bits, &compressor, &mixes) {
             compressor = Some(Compressor {
                 hash_bits,
                 mix_shifts: mix_shifts.clone(),
@@ -78,7 +86,7 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
             }
 
             if let Some((hash_bits, pair)) =
-                offset_compressor_search(phf.min_hash_bits, &compressor, &mixes, base_shift)
+                offset_compressor_search(spec.min_hash_bits, &compressor, &mixes, base_shift)
             {
                 compressor = Some(Compressor {
                     hash_bits,
@@ -95,9 +103,8 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
 
     let compressor = compressor?;
 
-    let mut phf = phf.clone();
     let x = ExprBuilder();
-    let mix_reg = phf.push_expr(
+    let mix_reg = tac.push_expr(
         x.sum(
             sel_regs
                 .iter()
@@ -108,8 +115,8 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
     );
     let unmasked_hash_reg = match compressor.base_shift_and_offset_table {
         Some((base_shift, offset_table)) => {
-            let offset_table = phf.push_data_table(offset_table);
-            phf.push_expr(x.add(
+            let offset_table = tables.push(offset_table);
+            tac.push_expr(x.add(
                 x.shrl(x.reg(mix_reg), x.imm(base_shift)),
                 x.table_get(
                     offset_table,
@@ -119,9 +126,12 @@ pub fn compressor_search(phf: &Phf, sel_regs: &[Reg]) -> Option<Phf> {
         }
         None => mix_reg,
     };
-    phf.push_expr(x.and(x.reg(unmasked_hash_reg), x.hash_mask()));
-    phf.build_hash_table(compressor.hash_bits);
-    Some(phf)
+    tac.push_expr(x.and(x.reg(unmasked_hash_reg), x.hash_mask()));
+    Some(CompressorSearchSolution {
+        tac,
+        tables,
+        hash_bits: compressor.hash_bits,
+    })
 }
 
 fn direct_compressor_search(

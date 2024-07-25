@@ -62,26 +62,17 @@ mod test {
 
     #[test]
     fn test_0() {
-        assert_eq!(
-            all_perms(PermGen::new(0)),
-            vec![Vec::new()]
-        )
+        assert_eq!(all_perms(PermGen::new(0)), vec![Vec::new()])
     }
 
     #[test]
     fn test_1() {
-        assert_eq!(
-            all_perms(PermGen::new(1)),
-            vec![vec![0]]
-        )
+        assert_eq!(all_perms(PermGen::new(1)), vec![vec![0]])
     }
 
     #[test]
     fn test_2() {
-        assert_eq!(
-            all_perms(PermGen::new(2)),
-            vec![vec![0, 1], vec![1, 0]]
-        )
+        assert_eq!(all_perms(PermGen::new(2)), vec![vec![0, 1], vec![1, 0]])
     }
 
     #[test]

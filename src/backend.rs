@@ -1,12 +1,13 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use crate::{
-    optimizer::{optimize, unflatten_many},
-    phf::{BinOp, Expr, Instr, Phf, Reg, Table},
+    ir::{remove_zero_shifts, BinOp, Expr, Instr, Table, Tac, Var},
+    search::Phf,
+    spec::Spec,
 };
 
 pub trait Backend {
-    fn emit(&self, phf: &Phf) -> String;
+    fn emit(&self, spec: &Spec, phf: &Phf) -> String;
 }
 
 pub struct CBackend {
@@ -70,18 +71,16 @@ impl CBackend {
 
     fn compile_expr_rec(phf: &Phf, expr: &Expr) -> (String, Option<BinOp>) {
         match *expr {
-            Expr::Reg(Reg(i)) => (format!("x{i}"), None),
+            Expr::Var(Var(i)) => (format!("x{i}"), None),
+            Expr::Reg(_) => panic!(),
             Expr::Imm(n) => (n.to_string(), None),
             Expr::StrGet(ref i) => (format!("key[{}]", Self::compile_expr_rec(phf, i).0), None),
             Expr::StrLen => ("(uint32_t) len".into(), None),
             Expr::TableGet(Table(t), ref i) => {
                 (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), None)
             }
-            Expr::TableIndexMask(t) => ((phf.data_tables[t.0].len() - 1).to_string(), None),
-            Expr::HashMask => (
-                (phf.hash_table.as_ref().unwrap().len() - 1).to_string(),
-                None,
-            ),
+            Expr::TableIndexMask(t) => ((phf.tables[t].len() - 1).to_string(), None),
+            Expr::HashMask => ((phf.key_table.len() - 1).to_string(), None),
             Expr::BinOp(op, ref a, ref b) => {
                 let op_str = match op {
                     BinOp::Add => "+",
@@ -144,10 +143,14 @@ impl Display for Declaration {
 }
 
 impl Backend for CBackend {
-    fn emit(&self, phf: &Phf) -> String {
-        let instrs = optimize(&phf.instrs);
+    fn emit(&self, spec: &Spec, phf: &Phf) -> String {
+        let expr = phf.tac.unflatten_tree(phf.tac.last_reg(), &HashMap::new());
+        let expr = remove_zero_shifts(expr);
+        let mut tac = Tac::new();
+        expr.flatten(&mut tac, &HashMap::new());
+        let (tac, _) = tac.local_value_numbering();
 
-        let key_used = instrs.iter().any(|i| matches!(&i, Instr::StrGet(_)));
+        let key_used = tac.instrs().iter().any(|i| matches!(&i, Instr::StrGet(_)));
         let key = Declaration::new(key_used, "const char* key");
         let len = Declaration::new(true, "size_t len");
 
@@ -169,7 +172,7 @@ const struct entry entries[] = {"
                 .into(),
         );
 
-        for (i, key) in phf.hash_table.as_ref().unwrap().iter().enumerate() {
+        for (i, key) in phf.key_table.iter().enumerate() {
             let string_literal = self.string_literal(key);
 
             let len = key.len();
@@ -177,7 +180,7 @@ const struct entry entries[] = {"
             let ordinal: String = if is_fake_key {
                 "-1".into()
             } else {
-                phf.keys.iter().position(|k| k == key).unwrap().to_string()
+                spec.keys.iter().position(|k| k == key).unwrap().to_string()
             };
 
             let entry = format!("{{ {string_literal}, {len}, {ordinal} }}");
@@ -193,8 +196,8 @@ uint32_t hash({}, {}) {{",
         ));
 
         {
-            let min = phf.min_nonzero_key_len;
-            let max = phf.max_key_len;
+            let min = spec.min_interpreted_key_len;
+            let max = spec.max_interpreted_key_len;
             lines.push(format!(
                 "    if (len < {min} || len > {max}) {{
         return 0;
@@ -202,7 +205,7 @@ uint32_t hash({}, {}) {{",
             ));
         }
 
-        for (i, table) in phf.data_tables.iter().enumerate() {
+        for (i, table) in phf.tables.tables().iter().enumerate() {
             let nums = table
                 .iter()
                 .map(|n| n.to_string())
@@ -211,7 +214,7 @@ uint32_t hash({}, {}) {{",
             lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
         }
 
-        let exprs = unflatten_many(&instrs);
+        let exprs = tac.unflatten_dag().0;
         for (i, expr) in exprs.iter().enumerate() {
             let expr_str = Self::compile_expr(phf, expr);
             lines.push(format!(
