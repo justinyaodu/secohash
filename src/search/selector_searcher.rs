@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     combinatorics::{ChooseGen, LendingIterator},
-    ir::{Reg, Tables, Tac, Trace},
+    ir::{Expr, ExprBuilder, Reg, Tables, Tac, Trace},
     search::selector::Selector,
     spec::Spec,
+    util::to_u32,
 };
 
 pub struct SelectorSearchSolution {
@@ -70,7 +71,7 @@ fn basic_search(spec: &Spec) -> Option<SelectorSearchSolution> {
             if num_choices > all_regs.len() {
                 continue;
             }
-            let sol = find_distinguishing_regs(&trace, all_regs, num_choices);
+            let sol = find_distinguishing_regs(&trace, all_regs, num_choices, &[]);
             if let Some(sel_regs) = sol {
                 return Some(SelectorSearchSolution {
                     tac,
@@ -84,75 +85,108 @@ fn basic_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     None
 }
 
+fn compile_sum_reg(spec: &Spec, tac: &mut Tac) -> Reg {
+    let x = ExprBuilder();
+    let char_values: Vec<Expr> = (0..spec.max_interpreted_key_len)
+        .map(|i| {
+            let i = to_u32(i);
+            let mask = tac.push_expr(x.shrl(x.sub(x.imm(i), x.str_len()), x.imm(16)));
+            x.reg(tac.push_expr(x.and(x.str_get(x.and(x.imm(i), x.reg(mask))), x.reg(mask))))
+        })
+        .collect();
+    tac.push_expr(x.sum(char_values))
+}
+
 fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
     for key in &spec.interpreted_keys {
         keys_by_len.entry(key.len()).or_default().push(key.clone())
     }
 
-    let instrs_per_index_selector = {
-        let mut tac = Tac::new();
-        let mut tables = Tables::new();
-        Selector::Index(0).compile(&mut tac, &mut tables);
-        tac.instrs().len()
-    };
-
-    let traces_by_len: HashMap<usize, Trace> = keys_by_len
+    let traces_by_len: HashMap<usize, (Trace, HashMap<Reg, usize>, Reg)> = keys_by_len
         .into_iter()
         .map(|(len, keys)| {
             let mut tac = Tac::new();
             let mut tables = Tables::new();
+
+            let mut reg_to_index = HashMap::new();
             for i in 0..len {
-                Selector::Index(i).compile(&mut tac, &mut tables);
+                reg_to_index.insert(Selector::Index(i).compile(&mut tac, &mut tables), i);
             }
-            (len, Trace::new(&keys, &tac, &tables, None))
+            let sum_reg = compile_sum_reg(spec, &mut tac);
+            (
+                len,
+                (
+                    Trace::new(&keys, &tac, &tables, None),
+                    reg_to_index,
+                    sum_reg,
+                ),
+            )
         })
         .collect();
 
-    'num_tables: for num_tables in 1..=3 {
-        let mut raw_tables = vec![vec![0u8; spec.max_interpreted_key_len + 1]; num_tables];
+    for use_sum_reg in [false, true] {
+        'num_tables: for num_tables in 1..=3 {
+            let mut raw_tables = vec![vec![0u32; spec.max_interpreted_key_len + 1]; num_tables];
 
-        for (&len, trace) in &traces_by_len {
-            let mut regs = Vec::new();
-            let mut i = instrs_per_index_selector - 1;
-            while i < trace.len() {
-                regs.push(Reg(i));
-                i += instrs_per_index_selector;
+            for (&len, &(ref trace, ref reg_to_index, sum_reg)) in &traces_by_len {
+                let mut regs = vec![Reg(0); reg_to_index.len()];
+                for (&reg, &index) in reg_to_index {
+                    regs[index] = reg;
+                }
+                let num_choices = usize::min(num_tables, regs.len());
+                let extra_regs = if use_sum_reg {
+                    vec![sum_reg]
+                } else {
+                    Vec::new()
+                };
+                let Some(chosen) = find_distinguishing_regs(trace, &regs, num_choices, &extra_regs)
+                else {
+                    continue 'num_tables;
+                };
+                for (i, choice) in chosen.iter().enumerate() {
+                    raw_tables[i][len] = reg_to_index[choice].try_into().unwrap();
+                }
             }
-            let num_choices = usize::min(num_tables, regs.len());
-            let Some(chosen) = find_distinguishing_regs(trace, &regs, num_choices) else {
-                continue 'num_tables;
-            };
-            for (i, choice) in chosen.iter().enumerate() {
-                raw_tables[i][len] = (choice.0 / instrs_per_index_selector).try_into().unwrap();
-            }
-        }
 
-        let mut tac = Tac::new();
-        let mut tables = Tables::new();
-        let mut sel_regs = Vec::new();
-        sel_regs.push(Selector::Len.compile(&mut tac, &mut tables));
-        for raw_table in raw_tables {
-            sel_regs.push(Selector::Table(raw_table).compile(&mut tac, &mut tables));
+            let mut tac = Tac::new();
+            let mut tables = Tables::new();
+            let mut sel_regs = Vec::new();
+            sel_regs.push(Selector::Len.compile(&mut tac, &mut tables));
+            for raw_table in raw_tables {
+                sel_regs.push(Selector::Table(raw_table).compile(&mut tac, &mut tables));
+            }
+            if use_sum_reg {
+                sel_regs.push(compile_sum_reg(spec, &mut tac));
+            }
+            return Some(SelectorSearchSolution {
+                tac,
+                tables,
+                sel_regs,
+            });
         }
-        return Some(SelectorSearchSolution {
-            tac,
-            tables,
-            sel_regs,
-        });
     }
 
     None
 }
 
-fn find_distinguishing_regs(trace: &Trace, regs: &[Reg], num_choices: usize) -> Option<Vec<Reg>> {
+fn find_distinguishing_regs(
+    trace: &Trace,
+    regs: &[Reg],
+    num_choices: usize,
+    extra_regs: &[Reg],
+) -> Option<Vec<Reg>> {
     let mut choose_gen = ChooseGen::new(regs.len(), num_choices);
     let mut seen = HashSet::new();
     'choices: while let Some(choice_indices) = choose_gen.next() {
         let choices: Vec<Reg> = choice_indices.iter().map(|&i| regs[i]).collect();
         seen.clear();
         for lane in 0..trace.width() {
-            let reg_values: Vec<u32> = choices.iter().map(|&reg| trace[reg][lane]).collect();
+            let reg_values: Vec<u32> = choices
+                .iter()
+                .chain(extra_regs)
+                .map(|&reg| trace[reg][lane])
+                .collect();
             if !seen.insert(reg_values) {
                 continue 'choices;
             }

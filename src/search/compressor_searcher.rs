@@ -4,7 +4,7 @@ use crate::{
     combinatorics::{LendingIterator, PermGen},
     ir::{ExprBuilder, Tables, Tac, Trace},
     spec::Spec,
-    util::{table_index_mask, table_size},
+    util::{table_index_mask, table_size, to_u32},
 };
 
 use super::selector_searcher::SelectorSearchSolution;
@@ -18,7 +18,7 @@ pub struct CompressorSearchSolution {
 struct Compressor {
     hash_bits: u32,
     mix_shifts: Vec<u32>,
-    base_shift_and_offset_table: Option<(u32, Vec<u8>)>,
+    base_shift_and_offset_table: Option<(u32, Vec<u32>)>,
 }
 
 pub fn compressor_search(
@@ -77,6 +77,7 @@ pub fn compressor_search(
                 mix_shifts: mix_shifts.clone(),
                 base_shift_and_offset_table: None,
             });
+            eprintln!("found direct compressor with hash_bits={hash_bits}");
         }
 
         let or_of_all_mixes = mixes.iter().copied().fold(0, |a, b| a | b);
@@ -93,6 +94,7 @@ pub fn compressor_search(
                     mix_shifts: mix_shifts.clone(),
                     base_shift_and_offset_table: Some(pair),
                 });
+                eprintln!("found offset compressor with hash_bits={hash_bits}");
             }
         }
 
@@ -164,7 +166,7 @@ fn offset_compressor_search(
     compressor: &Option<Compressor>,
     mixes: &[u32],
     base_shift: u32,
-) -> Option<(u32, (u32, Vec<u8>))> {
+) -> Option<(u32, (u32, Vec<u32>))> {
     let bases: Vec<u32> = mixes.iter().copied().map(|m| m >> base_shift).collect();
 
     for hash_bits in min_hash_bits..=32 {
@@ -200,7 +202,7 @@ fn offset_table_search(
     offset_indices: &[u32],
     offset_index_bits: u32,
     hash_bits: u32,
-) -> Option<Vec<u8>> {
+) -> Option<Vec<u32>> {
     assert!(bases.len() == offset_indices.len());
 
     let offset_table_size = table_size(offset_index_bits);
@@ -229,20 +231,19 @@ fn offset_table_search(
     let mut seen = vec![false; hash_table_size];
     seen[0] = true;
 
-    let mut offset_table: Vec<u8> = vec![0; offset_table_size];
-    let offset_size = usize::min(hash_table_size, 256);
+    let mut offset_table = vec![0; offset_table_size];
+    let offset_size = to_u32(hash_table_size);
     'group: for (group, index) in groups_and_indices {
         'offset: for offset in 0..offset_size {
-            let offset = u8::try_from(offset).unwrap();
             for &base in &group {
-                let hash = (base.wrapping_add(offset.into()) & hash_mask) as usize;
+                let hash = (base.wrapping_add(offset) & hash_mask) as usize;
                 if seen[hash] {
                     continue 'offset;
                 }
             }
 
             for &base in &group {
-                let hash = (base.wrapping_add(offset.into()) & hash_mask) as usize;
+                let hash = (base.wrapping_add(offset) & hash_mask) as usize;
                 if seen[hash] {
                     // Keys cannot be distinguished from base and masked index.
                     return None;

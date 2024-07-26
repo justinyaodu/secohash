@@ -10,7 +10,7 @@ pub enum Selector {
     And(usize),
     Shrl(u32),
     Len,
-    Table(Vec<u8>),
+    Table(Vec<u32>),
 }
 
 impl Selector {

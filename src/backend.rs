@@ -64,8 +64,7 @@ impl CBackend {
     fn precedence(op: Option<BinOp>) -> usize {
         match op {
             None => 0,
-            Some(BinOp::Add | BinOp::Sub | BinOp::And) => 1,
-            Some(BinOp::Shll | BinOp::Shrl) => 2,
+            Some(BinOp::Add | BinOp::Sub | BinOp::And | BinOp::Shll | BinOp::Shrl) => 1,
         }
     }
 
@@ -211,7 +210,7 @@ uint32_t hash({}, {}) {{",
                 .map(|n| n.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            lines.push(format!("    static const uint8_t t{i}[] = {{ {nums} }};"));
+            lines.push(format!("    static const uint32_t t{i}[] = {{ {nums} }};"));
         }
 
         let exprs = tac.unflatten_dag().0;
