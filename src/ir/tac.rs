@@ -10,6 +10,7 @@ pub enum Instr {
     Imm(u32),
     StrGet(Reg),
     StrLen,
+    StrSum,
     TableGet(Table, Reg),
     TableIndexMask(Table),
     HashMask,
@@ -56,7 +57,7 @@ impl Tac {
 
         for instr in &self.0 {
             let renamed = match *instr {
-                Instr::Imm(_) | Instr::StrLen | Instr::TableIndexMask(_) | Instr::HashMask => {
+                Instr::Imm(_) | Instr::StrLen | Instr::StrSum | Instr::TableIndexMask(_) | Instr::HashMask => {
                     *instr
                 }
                 Instr::StrGet(i) => Instr::StrGet(reg_to_new_reg[&i]),
@@ -81,7 +82,7 @@ impl Tac {
         let mut refcounts = vec![0usize; self.0.len()];
         for instr in &self.0 {
             match *instr {
-                Instr::Imm(_) | Instr::StrLen | Instr::TableIndexMask(_) | Instr::HashMask => (),
+                Instr::Imm(_) | Instr::StrLen | Instr::StrSum | Instr::TableIndexMask(_) | Instr::HashMask => (),
                 Instr::StrGet(i) => {
                     refcounts[i.0] += 1;
                 }
@@ -118,6 +119,7 @@ impl Tac {
             Instr::Imm(n) => x.imm(n),
             Instr::StrGet(r) => x.str_get(self.unflatten_tree(r, reg_to_var)),
             Instr::StrLen => x.str_len(),
+            Instr::StrSum => x.str_sum(),
             Instr::TableGet(t, r) => x.table_get(t, self.unflatten_tree(r, reg_to_var)),
             Instr::TableIndexMask(t) => x.table_index_mask(t),
             Instr::HashMask => x.hash_mask(),

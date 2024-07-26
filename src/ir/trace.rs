@@ -22,9 +22,16 @@ impl Trace {
                     .map(|lane| keys[lane][to_usize(regs[r.0][lane])])
                     .collect(),
                 Instr::StrLen => keys.iter().map(|key| to_u32(key.len())).collect(),
+                Instr::StrSum => keys.iter().map(|key| {
+                    let mut sum = 0;
+                    for (i, &x) in key.iter().enumerate() {
+                        sum += x << (i & 3);
+                    }
+                    sum
+                }).collect(),
                 Instr::TableGet(t, r) => regs[r.0]
                     .iter()
-                    .map(|&i| tables[t][to_usize(i)].into())
+                    .map(|&i| tables[t][to_usize(i)])
                     .collect(),
                 Instr::TableIndexMask(t) => vec![to_u32(tables[t].len() - 1); width],
                 Instr::HashMask => vec![to_u32(hash_table_len.unwrap() - 1); width],

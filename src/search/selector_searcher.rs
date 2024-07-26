@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     combinatorics::{ChooseGen, LendingIterator},
-    ir::{Expr, ExprBuilder, Reg, Tables, Tac, Trace},
+    ir::{Expr, ExprBuilder, Instr, Reg, Tables, Tac, Trace},
     search::selector::Selector,
     spec::Spec,
     util::to_u32,
@@ -85,18 +85,6 @@ fn basic_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     None
 }
 
-fn compile_sum_reg(spec: &Spec, tac: &mut Tac) -> Reg {
-    let x = ExprBuilder();
-    let char_values: Vec<Expr> = (0..spec.max_interpreted_key_len)
-        .map(|i| {
-            let i = to_u32(i);
-            let mask = tac.push_expr(x.shrl(x.sub(x.imm(i), x.str_len()), x.imm(16)));
-            x.reg(tac.push_expr(x.and(x.str_get(x.and(x.imm(i), x.reg(mask))), x.reg(mask))))
-        })
-        .collect();
-    tac.push_expr(x.sum(char_values))
-}
-
 fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     let mut keys_by_len: HashMap<usize, Vec<Vec<u32>>> = HashMap::new();
     for key in &spec.interpreted_keys {
@@ -113,7 +101,7 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
             for i in 0..len {
                 reg_to_index.insert(Selector::Index(i).compile(&mut tac, &mut tables), i);
             }
-            let sum_reg = compile_sum_reg(spec, &mut tac);
+            let sum_reg = tac.push(Instr::StrSum);
             (
                 len,
                 (
@@ -157,7 +145,7 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
                 sel_regs.push(Selector::Table(raw_table).compile(&mut tac, &mut tables));
             }
             if use_sum_reg {
-                sel_regs.push(compile_sum_reg(spec, &mut tac));
+                sel_regs.push(tac.push(Instr::StrSum));
             }
             return Some(SelectorSearchSolution {
                 tac,

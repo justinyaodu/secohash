@@ -12,6 +12,7 @@ pub enum Expr {
     Imm(u32),
     StrGet(Box<Expr>),
     StrLen,
+    StrSum,
     TableGet(Table, Box<Expr>),
     TableIndexMask(Table),
     HashMask,
@@ -29,6 +30,7 @@ impl Expr {
             | Expr::Reg(_)
             | Expr::Imm(_)
             | Expr::StrLen
+            | Expr::StrSum
             | Expr::TableIndexMask(_)
             | Expr::HashMask => self,
             Expr::StrGet(e) => x.str_get(e.transform(f)),
@@ -48,6 +50,7 @@ impl Expr {
                 tac.push(Instr::StrGet(i))
             }
             Expr::StrLen => tac.push(Instr::StrLen),
+            Expr::StrSum => tac.push(Instr::StrSum),
             Expr::TableGet(t, ref i) => {
                 let i = i.flatten(tac, var_to_reg);
                 tac.push(Instr::TableGet(t, i))
@@ -80,6 +83,10 @@ impl ExprBuilder {
 
     pub fn str_len(&self) -> Expr {
         Expr::StrLen
+    }
+
+    pub fn str_sum(&self) -> Expr {
+        Expr::StrSum
     }
 
     pub fn table_get(&self, t: Table, i: Expr) -> Expr {
