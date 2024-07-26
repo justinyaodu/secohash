@@ -2,10 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     combinatorics::{ChooseGen, LendingIterator},
-    ir::{Expr, ExprBuilder, Instr, Reg, Tables, Tac, Trace},
+    ir::{Instr, Reg, Tables, Tac, Trace},
     search::selector::Selector,
     spec::Spec,
-    util::to_u32,
 };
 
 pub struct SelectorSearchSolution {

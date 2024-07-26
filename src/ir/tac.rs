@@ -57,9 +57,11 @@ impl Tac {
 
         for instr in &self.0 {
             let renamed = match *instr {
-                Instr::Imm(_) | Instr::StrLen | Instr::StrSum | Instr::TableIndexMask(_) | Instr::HashMask => {
-                    *instr
-                }
+                Instr::Imm(_)
+                | Instr::StrLen
+                | Instr::StrSum
+                | Instr::TableIndexMask(_)
+                | Instr::HashMask => *instr,
                 Instr::StrGet(i) => Instr::StrGet(reg_to_new_reg[&i]),
                 Instr::TableGet(t, i) => Instr::TableGet(t, reg_to_new_reg[&i]),
                 Instr::BinOp(op, a, b) => Instr::BinOp(op, reg_to_new_reg[&a], reg_to_new_reg[&b]),
@@ -82,7 +84,11 @@ impl Tac {
         let mut refcounts = vec![0usize; self.0.len()];
         for instr in &self.0 {
             match *instr {
-                Instr::Imm(_) | Instr::StrLen | Instr::StrSum | Instr::TableIndexMask(_) | Instr::HashMask => (),
+                Instr::Imm(_)
+                | Instr::StrLen
+                | Instr::StrSum
+                | Instr::TableIndexMask(_)
+                | Instr::HashMask => (),
                 Instr::StrGet(i) => {
                     refcounts[i.0] += 1;
                 }

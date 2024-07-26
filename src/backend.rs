@@ -193,7 +193,7 @@ const struct entry entries[] = {"
 uint32_t str_sum(const char* key, size_t len) {{
     uint32_t sum = 0;
     for (size_t i = 0; i < len; i++) {{
-        sum += key[i] << (i & 3);
+        sum += key[i];
     }}
     return sum;
 }}
@@ -219,7 +219,17 @@ uint32_t hash({}, {}) {{",
                 .map(|n| n.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            lines.push(format!("    static const uint32_t t{i}[] = {{ {nums} }};"));
+            let max = table.iter().copied().max().unwrap();
+            let mut table_type = "uint32_t";
+            if max <= u16::MAX.into() {
+                table_type = "uint16_t";
+            }
+            if max <= u8::MAX.into() {
+                table_type = "uint8_t";
+            }
+            lines.push(format!(
+                "    static const {table_type} t{i}[] = {{ {nums} }};"
+            ));
         }
 
         let exprs = tac.unflatten_dag().0;

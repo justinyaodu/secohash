@@ -142,7 +142,7 @@ fn direct_compressor_search(
     mixes: &[u32],
 ) -> Option<u32> {
     let mut seen = HashSet::new();
-    'hash_bits: for hash_bits in min_hash_bits..=32 {
+    'hash_bits: for hash_bits in min_hash_bits..=(min_hash_bits + 1) {
         if let Some(c) = compressor {
             if c.hash_bits < hash_bits {
                 break;
@@ -169,7 +169,7 @@ fn offset_compressor_search(
 ) -> Option<(u32, (u32, Vec<u32>))> {
     let bases: Vec<u32> = mixes.iter().copied().map(|m| m >> base_shift).collect();
 
-    for hash_bits in min_hash_bits..=32 {
+    for hash_bits in min_hash_bits..=(min_hash_bits + 1) {
         if let Some(c) = compressor {
             if c.hash_bits <= hash_bits {
                 break;
