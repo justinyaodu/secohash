@@ -21,12 +21,22 @@ hash_table_size="$(
 (( hash_table_size -= 2 ))
 echo "${hash_table_size}" > "hash_table_size"
 
-data_bytes=$(
+uint8_t_count=$(
   grep -Eo 'static const uint8_t t[0-9]+\[\] = [^;]+;' "${project}/hasher.c" | \
   tr -dc ',;' | \
   wc -c
 )
-echo "${data_bytes}" > "data_bytes"
+uint16_t_count=$(
+  grep -Eo 'static const uint16_t t[0-9]+\[\] = [^;]+;' "${project}/hasher.c" | \
+  tr -dc ',;' | \
+  wc -c
+)
+uint32_t_count=$(
+  grep -Eo 'static const uint32_t t[0-9]+\[\] = [^;]+;' "${project}/hasher.c" | \
+  tr -dc ',;' | \
+  wc -c
+)
+echo "$(( uint8_t_count + 2 * uint16_t_count + 4 * uint32_t_count ))" > "data_bytes"
 
 (cd "${project}" && GCC_FLAGS='-Werror' make)
 

@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use crate::{
-    combinatorics::{LendingIterator, PermGen},
     ir::{ExprBuilder, Tables, Tac, Trace},
+    search::generational_bit_set::GenerationalBitSet,
     spec::Spec,
-    util::{table_index_mask, table_size, to_u32},
+    util::{table_index_mask, table_size, to_u32, to_usize},
 };
 
 use super::selector_searcher::SelectorSearchSolution;
@@ -29,78 +29,82 @@ pub fn compressor_search(
         sel_regs,
     }: SelectorSearchSolution,
 ) -> Option<CompressorSearchSolution> {
+    eprintln!("min_hash_bits={}", spec.min_hash_bits);
+
     let trace = Trace::new(&spec.interpreted_keys, &tac, &tables, None);
 
     let mut compressor: Option<Compressor> = None;
 
-    let n = sel_regs.len();
-    let mut perm_gen = PermGen::new(n);
-    'perm: while let Some(perm) = perm_gen.next() {
-        let mut shifts = vec![0];
-        let mut mixes = trace[sel_regs[perm[0]]].to_vec();
-        'sel: for i in 1..n {
-            let mut shift = *shifts.last().unwrap();
-            'shift: while shift < 32 {
-                let mut seen = HashSet::new();
-                let mut new_mixes = Vec::new();
-                for (lane, mix) in mixes.iter().copied().enumerate() {
-                    let sel_value = trace[sel_regs[perm[i]]][lane];
-                    let new_mix = mix + (sel_value << shift);
-                    new_mixes.push(new_mix);
+    let mut mix_shifts = vec![0];
+    let mut mixes = trace[sel_regs[0]].to_vec();
+    'sel: for i in 1..sel_regs.len() {
+        let mut shift = *mix_shifts.last().unwrap();
+        let mut seen = HashSet::with_capacity(trace.width());
+        'shift: while shift < 32 {
+            seen.clear();
+            let mut new_mixes = Vec::with_capacity(trace.width());
+            for (lane, mix) in mixes.iter().copied().enumerate() {
+                let sel_value = trace[sel_regs[i]][lane];
+                let new_mix = mix + (sel_value << shift);
+                new_mixes.push(new_mix);
 
-                    let mut mix_and_unmixed = vec![new_mix];
-                    for j in i + 1..n {
-                        mix_and_unmixed.push(trace[sel_regs[perm[j]]][lane]);
-                    }
-                    if !seen.insert(mix_and_unmixed) {
-                        shift += 1;
-                        continue 'shift;
-                    }
+                let mut mix_and_unmixed = vec![new_mix];
+                for j in i + 1..sel_regs.len() {
+                    mix_and_unmixed.push(trace[sel_regs[j]][lane]);
                 }
-
-                shifts.push(shift);
-                mixes = new_mixes;
-                continue 'sel;
+                if !seen.insert(mix_and_unmixed) {
+                    shift += 1;
+                    continue 'shift;
+                }
             }
 
-            continue 'perm;
+            mix_shifts.push(shift);
+            mixes = new_mixes;
+            continue 'sel;
         }
 
-        let mut mix_shifts = vec![0; n];
-        for (i, index) in perm.iter().copied().enumerate() {
-            mix_shifts[index] = shifts[i];
+        return None;
+    }
+
+    let start = Instant::now();
+    if let Some(hash_bits) = direct_compressor_search(spec.min_hash_bits, &compressor, &mixes) {
+        compressor = Some(Compressor {
+            hash_bits,
+            mix_shifts: mix_shifts.clone(),
+            base_shift_and_offset_table: None,
+        });
+        eprintln!("found direct compressor with hash_bits={hash_bits}");
+    }
+    eprintln!(
+        "direct compressor search took {} us",
+        start.elapsed().as_micros()
+    );
+
+    let mut interesting_mask = 0;
+    for i in 1..mixes.len() {
+        interesting_mask |= mixes[i - 1] ^ mixes[i];
+    }
+
+    for base_shift in 1..32 {
+        if interesting_mask >> base_shift == 0 {
+            break;
         }
 
-        if let Some(hash_bits) = direct_compressor_search(spec.min_hash_bits, &compressor, &mixes) {
+        let start = Instant::now();
+        if let Some((hash_bits, pair)) =
+            offset_compressor_search(spec.min_hash_bits, &compressor, &mixes, base_shift)
+        {
             compressor = Some(Compressor {
                 hash_bits,
                 mix_shifts: mix_shifts.clone(),
-                base_shift_and_offset_table: None,
+                base_shift_and_offset_table: Some(pair),
             });
-            eprintln!("found direct compressor with hash_bits={hash_bits}");
+            eprintln!("found offset compressor with hash_bits={hash_bits}");
         }
-
-        let or_of_all_mixes = mixes.iter().copied().fold(0, |a, b| a | b);
-        for base_shift in 0..32 {
-            if or_of_all_mixes >> base_shift == 0 {
-                break;
-            }
-
-            if let Some((hash_bits, pair)) =
-                offset_compressor_search(spec.min_hash_bits, &compressor, &mixes, base_shift)
-            {
-                compressor = Some(Compressor {
-                    hash_bits,
-                    mix_shifts: mix_shifts.clone(),
-                    base_shift_and_offset_table: Some(pair),
-                });
-                eprintln!("found offset compressor with hash_bits={hash_bits}");
-            }
-        }
-
-        // TODO: this makes the search a lot faster and is usually just as good,
-        // but it should be configurable.
-        break;
+        eprintln!(
+            "offset compressor search for base_shift={base_shift} took {} us",
+            start.elapsed().as_micros()
+        );
     }
 
     let compressor = compressor?;
@@ -142,7 +146,7 @@ fn direct_compressor_search(
     mixes: &[u32],
 ) -> Option<u32> {
     let mut seen = HashSet::new();
-    'hash_bits: for hash_bits in min_hash_bits..=(min_hash_bits + 1) {
+    'hash_bits: for hash_bits in min_hash_bits..=32 {
         if let Some(c) = compressor {
             if c.hash_bits < hash_bits {
                 break;
@@ -171,7 +175,7 @@ fn offset_compressor_search(
 
     for hash_bits in min_hash_bits..=(min_hash_bits + 1) {
         if let Some(c) = compressor {
-            if c.hash_bits <= hash_bits {
+            if c.hash_bits < hash_bits {
                 break;
             }
         }
@@ -205,6 +209,9 @@ fn offset_table_search(
 ) -> Option<Vec<u32>> {
     assert!(bases.len() == offset_indices.len());
 
+    let hash_table_size = table_size(hash_bits);
+    let hash_mask = table_index_mask(hash_bits);
+
     let offset_table_size = table_size(offset_index_bits);
     let offset_table_index_mask = table_index_mask(offset_index_bits);
 
@@ -214,22 +221,33 @@ fn offset_table_search(
         groups[(index & offset_table_index_mask) as usize].push(base);
     }
 
+    let mut seen = GenerationalBitSet::new(hash_table_size);
+
     // Sort the non-empty groups in descending order by size.
     let mut groups_and_indices = Vec::new();
     for (index, group) in groups.into_iter().enumerate() {
+        if group.len() >= 2 {
+            seen.clear_all();
+            for &base in &group {
+                if !seen.insert(to_usize(base & hash_mask)) {
+                    // eprintln!("pruned because of group conflict");
+                    return None;
+                }
+            }
+        }
+
         if !group.is_empty() {
             groups_and_indices.push((group, index));
         }
     }
     groups_and_indices.sort_by_key(|p| p.0.len());
     groups_and_indices.reverse();
+    // eprintln!("group sizes = {:?}", groups_and_indices.iter().map(|x| x.0.len()).collect::<Vec<_>>());
 
     // Assign offsets to indices using a first-fit algorithm.
 
-    let hash_table_size = table_size(hash_bits);
-    let hash_mask = table_index_mask(hash_bits);
-    let mut seen = vec![false; hash_table_size];
-    seen[0] = true;
+    seen.clear_all();
+    seen.set(0);
 
     let mut offset_table = vec![0; offset_table_size];
     let offset_size = to_u32(hash_table_size);
@@ -237,18 +255,14 @@ fn offset_table_search(
         'offset: for offset in 0..offset_size {
             for &base in &group {
                 let hash = (base.wrapping_add(offset) & hash_mask) as usize;
-                if seen[hash] {
+                if seen.test(hash) {
                     continue 'offset;
                 }
             }
 
             for &base in &group {
                 let hash = (base.wrapping_add(offset) & hash_mask) as usize;
-                if seen[hash] {
-                    // Keys cannot be distinguished from base and masked index.
-                    return None;
-                }
-                seen[hash] = true;
+                seen.set(hash);
             }
             offset_table[index] = offset;
             continue 'group;

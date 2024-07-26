@@ -1,4 +1,5 @@
 mod compressor_searcher;
+mod generational_bit_set;
 mod phf;
 mod selector;
 mod selector_searcher;
