@@ -33,8 +33,6 @@ pub fn compressor_search(
 
     let trace = Trace::new(&spec.interpreted_keys, &tac, &tables, None);
 
-    let mut compressor: Option<Compressor> = None;
-
     let mut mix_shifts = vec![0];
     let mut mixes = trace[sel_regs[0]].to_vec();
     'sel: for i in 1..sel_regs.len() {
@@ -66,48 +64,64 @@ pub fn compressor_search(
         return None;
     }
 
+    let direct_hash_bits = direct_compressor_search(spec.min_hash_bits, &mixes);
+
+    let mut compressor = Compressor {
+        hash_bits: direct_hash_bits,
+        mix_shifts: mix_shifts.clone(),
+        base_shift_and_offset_table: None,
+    };
+
     let start = Instant::now();
-    if let Some(hash_bits) = direct_compressor_search(spec.min_hash_bits, &compressor, &mixes) {
-        compressor = Some(Compressor {
-            hash_bits,
-            mix_shifts: mix_shifts.clone(),
-            base_shift_and_offset_table: None,
-        });
-        eprintln!("found direct compressor with hash_bits={hash_bits}");
-    }
+    eprintln!(
+        "found direct compressor with hash_bits={}",
+        compressor.hash_bits
+    );
     eprintln!(
         "direct compressor search took {} us",
         start.elapsed().as_micros()
     );
 
-    let mut interesting_mask = 0;
-    for i in 1..mixes.len() {
-        interesting_mask |= mixes[i - 1] ^ mixes[i];
-    }
+    if compressor.hash_bits > spec.min_hash_bits {
+        'compressor: for hash_bits in spec.min_hash_bits..=spec.min_hash_bits {
+            let hash_table_size = table_size(hash_bits);
+            let mut seen = GenerationalBitSet::new(hash_table_size);
 
-    for base_shift in 1..32 {
-        if interesting_mask >> base_shift == 0 {
-            break;
+            for offset_index_bits in 1..=hash_bits {
+                let offset_table_size = table_size(offset_index_bits);
+                let offset_table_index_mask = table_index_mask(offset_index_bits);
+
+                let mut groups = vec![Vec::new(); offset_table_size];
+                for &mix in &mixes {
+                    let offset_index = mix & offset_table_index_mask;
+                    groups[to_usize(offset_index)].push(mix);
+                }
+
+                groups.retain(|group| !group.is_empty());
+                groups.sort_by_key(Vec::len);
+
+                for base_shift in (direct_hash_bits - hash_bits)..=offset_index_bits {
+                    let start = Instant::now();
+                    let opt = offset_table_search(
+                        &groups,
+                        hash_bits,
+                        offset_index_bits,
+                        base_shift,
+                        &mut seen,
+                    );
+                    eprintln!("offset table search for offset_index_bits={offset_index_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
+                    if let Some(offset_table) = opt {
+                        compressor = Compressor {
+                            hash_bits,
+                            mix_shifts,
+                            base_shift_and_offset_table: Some((base_shift, offset_table)),
+                        };
+                        break 'compressor;
+                    }
+                }
+            }
         }
-
-        let start = Instant::now();
-        if let Some((hash_bits, pair)) =
-            offset_compressor_search(spec.min_hash_bits, &compressor, &mixes, base_shift)
-        {
-            compressor = Some(Compressor {
-                hash_bits,
-                mix_shifts: mix_shifts.clone(),
-                base_shift_and_offset_table: Some(pair),
-            });
-            eprintln!("found offset compressor with hash_bits={hash_bits}");
-        }
-        eprintln!(
-            "offset compressor search for base_shift={base_shift} took {} us",
-            start.elapsed().as_micros()
-        );
     }
-
-    let compressor = compressor?;
 
     let x = ExprBuilder();
     let mix_reg = tac.push_expr(
@@ -140,19 +154,9 @@ pub fn compressor_search(
     })
 }
 
-fn direct_compressor_search(
-    min_hash_bits: u32,
-    compressor: &Option<Compressor>,
-    mixes: &[u32],
-) -> Option<u32> {
-    let mut seen = HashSet::new();
-    'hash_bits: for hash_bits in min_hash_bits..=32 {
-        if let Some(c) = compressor {
-            if c.hash_bits < hash_bits {
-                break;
-            }
-        }
-
+fn direct_compressor_search(min_hash_bits: u32, mixes: &[u32]) -> u32 {
+    let mut seen = HashSet::with_capacity(mixes.len());
+    'hash_bits: for hash_bits in min_hash_bits..32 {
         let mask = table_index_mask(hash_bits);
         seen.clear();
         for mix in mixes {
@@ -160,115 +164,80 @@ fn direct_compressor_search(
                 continue 'hash_bits;
             }
         }
-        return Some(hash_bits);
+        return hash_bits;
     }
-    None
-}
-
-fn offset_compressor_search(
-    min_hash_bits: u32,
-    compressor: &Option<Compressor>,
-    mixes: &[u32],
-    base_shift: u32,
-) -> Option<(u32, (u32, Vec<u32>))> {
-    let bases: Vec<u32> = mixes.iter().copied().map(|m| m >> base_shift).collect();
-
-    for hash_bits in min_hash_bits..=(min_hash_bits + 1) {
-        if let Some(c) = compressor {
-            if c.hash_bits < hash_bits {
-                break;
-            }
-        }
-
-        for offset_index_bits in 1..=hash_bits {
-            if let Some(c) = compressor {
-                if c.hash_bits == hash_bits {
-                    if let Some((_, offset_table)) = c.base_shift_and_offset_table.as_ref() {
-                        if offset_table.len() <= 1usize << offset_index_bits {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if let Some(offset_table) =
-                offset_table_search(&bases, mixes, offset_index_bits, hash_bits)
-            {
-                return Some((hash_bits, (base_shift, offset_table)));
-            }
-        }
-    }
-    None
+    32
 }
 
 fn offset_table_search(
-    bases: &[u32],
-    offset_indices: &[u32],
-    offset_index_bits: u32,
+    groups: &[Vec<u32>],
     hash_bits: u32,
+    offset_index_bits: u32,
+    base_shift: u32,
+    seen: &mut GenerationalBitSet,
 ) -> Option<Vec<u32>> {
-    assert!(bases.len() == offset_indices.len());
-
     let hash_table_size = table_size(hash_bits);
     let hash_mask = table_index_mask(hash_bits);
-
     let offset_table_size = table_size(offset_index_bits);
     let offset_table_index_mask = table_index_mask(offset_index_bits);
 
-    // Group all the bases for each offset index.
-    let mut groups = vec![Vec::new(); offset_table_size];
-    for (&base, &index) in bases.iter().zip(offset_indices) {
-        groups[(index & offset_table_index_mask) as usize].push(base);
-    }
-
-    let mut seen = GenerationalBitSet::new(hash_table_size);
-
-    // Sort the non-empty groups in descending order by size.
-    let mut groups_and_indices = Vec::new();
-    for (index, group) in groups.into_iter().enumerate() {
-        if group.len() >= 2 {
-            seen.clear_all();
-            for &base in &group {
-                if !seen.insert(to_usize(base & hash_mask)) {
-                    // eprintln!("pruned because of group conflict");
-                    return None;
-                }
-            }
-        }
-
-        if !group.is_empty() {
-            groups_and_indices.push((group, index));
-        }
-    }
-    groups_and_indices.sort_by_key(|p| p.0.len());
-    groups_and_indices.reverse();
-    // eprintln!("group sizes = {:?}", groups_and_indices.iter().map(|x| x.0.len()).collect::<Vec<_>>());
-
-    // Assign offsets to indices using a first-fit algorithm.
-
     seen.clear_all();
     seen.set(0);
+    let mut full_before = 1;
 
     let mut offset_table = vec![0; offset_table_size];
     let offset_size = to_u32(hash_table_size);
-    'group: for (group, index) in groups_and_indices {
-        'offset: for offset in 0..offset_size {
-            for &base in &group {
-                let hash = (base.wrapping_add(offset) & hash_mask) as usize;
-                if seen.test(hash) {
-                    continue 'offset;
-                }
+
+    'group: for group in groups.iter().rev() {
+        let start = Instant::now();
+        if group.len() == 1 {
+            while seen.test(full_before) {
+                full_before += 1;
             }
 
-            for &base in &group {
-                let hash = (base.wrapping_add(offset) & hash_mask) as usize;
-                seen.set(hash);
-            }
-            offset_table[index] = offset;
+            let offset = to_u32(full_before).wrapping_sub(group[0] >> base_shift) & hash_mask;
+            let offset_table_index = group[0] & offset_table_index_mask;
+            offset_table[to_usize(offset_table_index)] = offset;
+
+            seen.set(full_before);
+            full_before += 1;
+
+            // eprintln!(
+            //     "\tfit group of size {} in {} us",
+            //     group.len(),
+            //     start.elapsed().as_micros()
+            // );
             continue 'group;
+        } else {
+            'offset: for offset in 0..offset_size {
+                for &mix in group {
+                    let hash = (mix >> base_shift).wrapping_add(offset) & hash_mask;
+                    if seen.test(to_usize(hash)) {
+                        continue 'offset;
+                    }
+                }
+
+                for &mix in group {
+                    let hash = (mix >> base_shift).wrapping_add(offset) & hash_mask;
+                    seen.set(to_usize(hash));
+                }
+                let offset_table_index = group[0] & offset_table_index_mask;
+                offset_table[to_usize(offset_table_index)] = offset;
+                // eprintln!(
+                //     "\tfit group of size {} in {} us",
+                //     group.len(),
+                //     start.elapsed().as_micros()
+                // );
+                continue 'group;
+            }
         }
 
-        // No table value will resolve the conflicts for this group.
+        // No offset can resolve the conflicts for this group.
+        eprintln!(
+            "\tfailed to fit group of size {} in {} us",
+            group.len(),
+            start.elapsed().as_micros()
+        );
         return None;
     }
 
