@@ -1,4 +1,3 @@
-mod bit_mask;
 mod compressor_searcher;
 mod generational_bit_set;
 mod phf;

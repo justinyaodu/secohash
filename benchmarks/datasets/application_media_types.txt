@@ -124,7 +124,7 @@ dskpp+xml
 dssc+der
 dssc+xml
 dvcs
-ecmascript (OBSOLETED in favor of text/javascript)
+ecmascript
 edhoc+cbor-seq
 EDI-consent
 EDIFACT
@@ -160,9 +160,9 @@ fhir+json
 fhir+xml
 fits
 flexfec
-font-sfnt - DEPRECATED in favor of font/sfnt
+font-sfnt
 font-tdpfr
-font-woff - DEPRECATED in favor of font/woff
+font-woff
 framework-attributes+xml
 geo+json
 geo+json-seq
@@ -199,7 +199,7 @@ ipp
 ISUP
 its+xml
 java-archive
-javascript (OBSOLETED in favor of text/javascript)
+javascript
 jf2feed+json
 jose
 jose+json
@@ -362,7 +362,7 @@ raptorfec
 rdap+json
 reginfo+xml
 relax-ng-compact-syntax
-remote-printing (OBSOLETE)
+remote-printing
 reputon+json
 resource-lists-diff+xml
 resource-lists+xml
@@ -420,7 +420,7 @@ simple-message-summary
 simpleSymbolContainer
 sipc
 slate
-smil (OBSOLETED in favor of application/smil+xml)
+smil
 smil+xml
 smpte336m
 soap+fastinfoset
@@ -513,7 +513,7 @@ vnd.3gpp.mcptt-ue-config+xml
 vnd.3gpp.mcptt-ue-init-config+xml
 vnd.3gpp.mcptt-user-profile+xml
 vnd.3gpp.mcvideo-affiliation-command+xml
-vnd.3gpp.mcvideo-affiliation-info+xml (OBSOLETED in favor of application/vnd.3gpp.mcvideo-info+xml)
+vnd.3gpp.mcvideo-affiliation-info+xml
 vnd.3gpp.mcvideo-info+xml
 vnd.3gpp.mcvideo-location-info+xml
 vnd.3gpp.mcvideo-mbms-usage-info+xml
@@ -611,7 +611,7 @@ vnd.apple.keynote
 vnd.apple.mpegurl
 vnd.apple.numbers
 vnd.apple.pages
-vnd.arastra.swi (OBSOLETED in favor of application/vnd.aristanetworks.swi)
+vnd.arastra.swi
 vnd.aristanetworks.swi
 vnd.artisan+json
 vnd.artsquare
@@ -826,8 +826,8 @@ vnd.fluxtime.clip
 vnd.font-fontforge-sfd
 vnd.framemaker
 vnd.freelog.comic
-vnd.frogans.fnc (OBSOLETE)
-vnd.frogans.ltf (OBSOLETE)
+vnd.frogans.fnc
+vnd.frogans.ltf
 vnd.fsc.weblaunch
 vnd.fujifilm.fb.docuworks
 vnd.fujifilm.fb.docuworks.binder
@@ -860,8 +860,8 @@ vnd.gentoo.gpkg
 vnd.gentoo.manifest
 vnd.gentoo.xpak
 vnd.gentoo.pkgmetadata+xml
-vnd.geo+json (OBSOLETED by [RFC7946] in favor of application/geo+json)
-vnd.geocube+xml (OBSOLETED by request)
+vnd.geo+json
+vnd.geocube+xml
 vnd.geogebra.file
 vnd.geogebra.slides
 vnd.geogebra.tool
@@ -872,12 +872,12 @@ vnd.geospace
 vnd.gerber
 vnd.globalplatform.card-content-mgt
 vnd.globalplatform.card-content-mgt-response
-vnd.gmx - DEPRECATED
+vnd.gmx
 vnd.gnu.taler.exchange+json
 vnd.gnu.taler.merchant+json
 vnd.google-earth.kml+xml
 vnd.google-earth.kmz
-vnd.gov.sk.e-form+xml (OBSOLETED by request)
+vnd.gov.sk.e-form+xml
 vnd.gov.sk.e-form+zip
 vnd.gov.sk.xmldatacontainer+xml
 vnd.gpxsee.map+xml
@@ -912,10 +912,10 @@ vnd.hyper-item+json
 vnd.hyper+json
 vnd.hyperdrive+json
 vnd.hzn-3d-crossword
-vnd.ibm.afplinedata (OBSOLETED in favor of vnd.afpc.afplinedata)
+vnd.ibm.afplinedata
 vnd.ibm.electronic-media
 vnd.ibm.MiniPay
-vnd.ibm.modcap (OBSOLETED in favor of application/vnd.afpc.modca)
+vnd.ibm.modcap
 vnd.ibm.rights-management
 vnd.ibm.secure-container
 vnd.iccprofile
@@ -937,7 +937,7 @@ vnd.ims.lti.v2.toolsettings.simple+json
 vnd.informedcontrol.rms+xml
 vnd.infotech.project
 vnd.infotech.project+xml
-vnd.informix-visionary (OBSOLETED in favor of application/vnd.visionary)
+vnd.informix-visionary
 vnd.innopath.wamp.notification
 vnd.insors.igm
 vnd.intercon.formnet
@@ -1134,7 +1134,7 @@ vnd.nokia.landmarkcollection+xml
 vnd.nokia.ncd
 vnd.nokia.n-gage.ac+xml
 vnd.nokia.n-gage.data
-vnd.nokia.n-gage.symbian.install (OBSOLETE
+vnd.nokia.n-gage.symbian.install
 vnd.nokia.pcd+wbxml
 vnd.nokia.pcd+xml
 vnd.nokia.radio-preset
@@ -1153,7 +1153,7 @@ vnd.oai.workflows+yaml
 vnd.oasis.opendocument.base
 vnd.oasis.opendocument.chart
 vnd.oasis.opendocument.chart-template
-vnd.oasis.opendocument.database (OBSOLETED in favor of application/vnd.oasis.opendocument.base)
+vnd.oasis.opendocument.database
 vnd.oasis.opendocument.formula
 vnd.oasis.opendocument.formula-template
 vnd.oasis.opendocument.graphics
@@ -1545,7 +1545,7 @@ vnd.yamaha.through-ngn
 vnd.yamaha.tunnel-udpencap
 vnd.yaoweme
 vnd.yellowriver-custom-menu
-vnd.youtube.yt (OBSOLETED in favor of video/vnd.youtube.yt)
+vnd.youtube.yt
 vnd.zul
 vnd.zzazz.deck+xml
 voicexml+xml

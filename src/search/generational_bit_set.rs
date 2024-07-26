@@ -1,6 +1,8 @@
+type Word = u8;
+
 pub struct GenerationalBitSet {
-    generation: u8,
-    values: Vec<u8>,
+    generation: Word,
+    values: Vec<Word>,
 }
 
 impl GenerationalBitSet {
@@ -19,14 +21,8 @@ impl GenerationalBitSet {
         self.values[i] = self.generation;
     }
 
-    pub fn insert(&mut self, i: usize) -> bool {
-        let is_new = !self.test(i);
-        self.set(i);
-        is_new
-    }
-
     pub fn clear_all(&mut self) {
-        if self.generation == u8::MAX {
+        if self.generation == Word::MAX {
             self.generation = 1;
             self.values.fill(0);
         } else {
