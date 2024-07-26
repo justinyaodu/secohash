@@ -7,7 +7,7 @@ use crate::{
     util::{table_index_mask, table_size, to_u32, to_usize},
 };
 
-use super::selector_searcher::SelectorSearchSolution;
+use super::{bit_mask::BitMask, selector_searcher::SelectorSearchSolution};
 
 pub struct CompressorSearchSolution {
     pub tac: Tac,
@@ -85,7 +85,8 @@ pub fn compressor_search(
     if compressor.hash_bits > spec.min_hash_bits {
         'compressor: for hash_bits in spec.min_hash_bits..=spec.min_hash_bits {
             let hash_table_size = table_size(hash_bits);
-            let mut seen = GenerationalBitSet::new(hash_table_size);
+            let mut seen = BitMask::new(hash_table_size);
+            let mut group_mask = BitMask::new(hash_table_size);
 
             for offset_index_bits in 1..=hash_bits {
                 let offset_table_size = table_size(offset_index_bits);
@@ -108,6 +109,7 @@ pub fn compressor_search(
                         offset_index_bits,
                         base_shift,
                         &mut seen,
+                        &mut group_mask,
                     );
                     eprintln!("offset table search for offset_index_bits={offset_index_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
                     if let Some(offset_table) = opt {
@@ -174,7 +176,8 @@ fn offset_table_search(
     hash_bits: u32,
     offset_index_bits: u32,
     base_shift: u32,
-    seen: &mut GenerationalBitSet,
+    seen: &mut BitMask,
+    group_mask: &mut BitMask,
 ) -> Option<Vec<u32>> {
     let hash_table_size = table_size(hash_bits);
     let hash_mask = table_index_mask(hash_bits);
@@ -208,6 +211,30 @@ fn offset_table_search(
             //     start.elapsed().as_micros()
             // );
             continue 'group;
+        } else if seen.should_use_disjoint(group.len()) {
+            group_mask.clear_all();
+            for &mix in group {
+                group_mask.set(to_usize((mix >> base_shift) & hash_mask));
+            }
+
+            'offset: for offset in 0..offset_size {
+                if !seen.disjoint(group_mask, to_usize(offset)) {
+                    continue 'offset;
+                }
+
+                for &mix in group {
+                    let hash = (mix >> base_shift).wrapping_add(offset) & hash_mask;
+                    seen.set(to_usize(hash));
+                }
+                let offset_table_index = group[0] & offset_table_index_mask;
+                offset_table[to_usize(offset_table_index)] = offset;
+                // eprintln!(
+                //     "\tfit group of size {} in {} us",
+                //     group.len(),
+                //     start.elapsed().as_micros()
+                // );
+                continue 'group;
+            }
         } else {
             'offset: for offset in 0..offset_size {
                 for &mix in group {
