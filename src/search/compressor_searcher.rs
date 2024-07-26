@@ -4,10 +4,10 @@ use crate::{
     combinatorics::{LendingIterator, PermGen},
     ir::{ExprBuilder, Tables, Tac, Trace},
     spec::Spec,
-    util::{table_index_mask, table_size, to_u32},
+    util::{table_index_mask, table_size, to_u32, to_usize},
 };
 
-use super::selector_searcher::SelectorSearchSolution;
+use super::{bit_set::BitSet, selector_searcher::SelectorSearchSolution};
 
 pub struct CompressorSearchSolution {
     pub tac: Tac,
@@ -141,8 +141,8 @@ fn direct_compressor_search(
     compressor: &Option<Compressor>,
     mixes: &[u32],
 ) -> Option<u32> {
-    let mut seen = HashSet::new();
     'hash_bits: for hash_bits in min_hash_bits..=(min_hash_bits + 1) {
+        let mut seen = BitSet::new(table_size(hash_bits));
         if let Some(c) = compressor {
             if c.hash_bits < hash_bits {
                 break;
@@ -150,9 +150,8 @@ fn direct_compressor_search(
         }
 
         let mask = table_index_mask(hash_bits);
-        seen.clear();
         for mix in mixes {
-            if !seen.insert(mix & mask) {
+            if !seen.insert(to_usize(mix & mask)) {
                 continue 'hash_bits;
             }
         }
@@ -228,8 +227,8 @@ fn offset_table_search(
 
     let hash_table_size = table_size(hash_bits);
     let hash_mask = table_index_mask(hash_bits);
-    let mut seen = vec![false; hash_table_size];
-    seen[0] = true;
+    let mut seen = BitSet::new(hash_table_size);
+    seen.set(0);
 
     let mut offset_table = vec![0; offset_table_size];
     let offset_size = to_u32(hash_table_size);
@@ -237,18 +236,17 @@ fn offset_table_search(
         'offset: for offset in 0..offset_size {
             for &base in &group {
                 let hash = (base.wrapping_add(offset) & hash_mask) as usize;
-                if seen[hash] {
+                if seen.test(hash) {
                     continue 'offset;
                 }
             }
 
             for &base in &group {
                 let hash = (base.wrapping_add(offset) & hash_mask) as usize;
-                if seen[hash] {
+                if !seen.insert(hash) {
                     // Keys cannot be distinguished from base and masked index.
                     return None;
                 }
-                seen[hash] = true;
             }
             offset_table[index] = offset;
             continue 'group;

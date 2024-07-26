@@ -1,3 +1,4 @@
+mod bit_set;
 mod compressor_searcher;
 mod phf;
 mod selector;
