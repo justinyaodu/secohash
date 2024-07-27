@@ -29,8 +29,6 @@ pub fn compressor_search(
         sel_regs,
     }: SelectorSearchSolution,
 ) -> Option<CompressorSearchSolution> {
-    eprintln!("min_hash_bits={}", spec.min_hash_bits);
-
     let trace = Trace::new(&spec.interpreted_keys, &tac, &tables, None);
 
     let mut mix_shifts = vec![0];
@@ -65,22 +63,11 @@ pub fn compressor_search(
     }
 
     let direct_hash_bits = direct_compressor_search(spec.min_hash_bits, &mixes);
-
     let mut compressor = Compressor {
         hash_bits: direct_hash_bits,
         mix_shifts: mix_shifts.clone(),
         base_shift_and_offset_table: None,
     };
-
-    let start = Instant::now();
-    eprintln!(
-        "found direct compressor with hash_bits={}",
-        compressor.hash_bits
-    );
-    eprintln!(
-        "direct compressor search took {} us",
-        start.elapsed().as_micros()
-    );
 
     if compressor.hash_bits > spec.min_hash_bits {
         'compressor: for hash_bits in spec.min_hash_bits..=spec.min_hash_bits {
@@ -189,8 +176,6 @@ fn offset_table_search(
     let offset_size = to_u32(hash_table_size);
 
     for group in groups.iter().rev() {
-        let start = Instant::now();
-
         let mut good_offset = None;
         if group.len() == 1 {
             while seen.test(full_before) {
@@ -222,12 +207,6 @@ fn offset_table_search(
             let offset_table_index = group[0] & offset_table_index_mask;
             offset_table[to_usize(offset_table_index)] = offset;
         } else {
-            // No offset can resolve the conflicts for this group.
-            eprintln!(
-                "\tfailed to fit group of size {} in {} us",
-                group.len(),
-                start.elapsed().as_micros()
-            );
             return None;
         }
     }
