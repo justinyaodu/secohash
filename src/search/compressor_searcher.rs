@@ -1,7 +1,7 @@
 use std::{collections::HashSet, time::Instant};
 
 use crate::{
-    ir::{ExprBuilder, Tables, Tac, Trace},
+    ir::{ExprBuilder, Reg, Tables, Tac, Trace},
     search::generational_bit_set::GenerationalBitSet,
     spec::Spec,
     util::{table_index_mask, table_size, to_u32, to_usize},
@@ -29,7 +29,45 @@ pub fn compressor_search(
         sel_regs,
     }: SelectorSearchSolution,
 ) -> Option<CompressorSearchSolution> {
-    let trace = Trace::new(&spec.interpreted_keys, &tac, &tables, None);
+    let compressor = find_compressor(spec, &tac, &tables, &sel_regs)?;
+    let x = ExprBuilder();
+    let mix_reg = tac.push_expr(
+        x.sum(
+            sel_regs
+                .iter()
+                .zip(compressor.mix_shifts)
+                .map(|(&sel, left_shift)| x.shll(x.reg(sel), x.imm(left_shift)))
+                .collect(),
+        ),
+    );
+    let unmasked_hash_reg = match compressor.base_shift_and_offset_table {
+        Some((base_shift, offset_table)) => {
+            let offset_table = tables.push(offset_table);
+            tac.push_expr(x.add(
+                x.shrl(x.reg(mix_reg), x.imm(base_shift)),
+                x.table_get(
+                    offset_table,
+                    x.and(x.reg(mix_reg), x.table_index_mask(offset_table)),
+                ),
+            ))
+        }
+        None => mix_reg,
+    };
+    tac.push_expr(x.and(x.reg(unmasked_hash_reg), x.hash_mask()));
+    Some(CompressorSearchSolution {
+        tac,
+        tables,
+        hash_bits: compressor.hash_bits,
+    })
+}
+
+fn find_compressor(
+    spec: &Spec,
+    tac: &Tac,
+    tables: &Tables,
+    sel_regs: &[Reg],
+) -> Option<Compressor> {
+    let trace = Trace::new(&spec.interpreted_keys, tac, tables, None);
 
     let mut mix_shifts = vec![0];
     let mut mixes = trace[sel_regs[0]].to_vec();
@@ -62,90 +100,56 @@ pub fn compressor_search(
         return None;
     }
 
-    let direct_hash_bits = direct_compressor_search(spec.min_hash_bits, &mixes);
-    let mut compressor = Compressor {
-        hash_bits: direct_hash_bits,
-        mix_shifts: mix_shifts.clone(),
-        base_shift_and_offset_table: None,
-    };
+    let distinguishing_bits = min_distinguishing_bits(spec.min_hash_bits, &mixes);
+    if distinguishing_bits == spec.min_hash_bits {
+        return Some(Compressor {
+            hash_bits: distinguishing_bits,
+            mix_shifts: mix_shifts.clone(),
+            base_shift_and_offset_table: None,
+        });
+    }
 
-    if compressor.hash_bits > spec.min_hash_bits {
-        'compressor: for hash_bits in spec.min_hash_bits..=spec.min_hash_bits {
-            let hash_table_size = table_size(hash_bits);
-            let mut seen = GenerationalBitSet::new(hash_table_size);
+    let hash_bits = spec.min_hash_bits;
+    let hash_table_size = table_size(hash_bits);
+    let mut seen = GenerationalBitSet::new(hash_table_size);
 
-            for offset_index_bits in 1..=hash_bits {
-                let offset_table_size = table_size(offset_index_bits);
-                let offset_table_index_mask = table_index_mask(offset_index_bits);
+    for offset_index_bits in 1..=hash_bits {
+        let offset_table_size = table_size(offset_index_bits);
+        let offset_table_index_mask = table_index_mask(offset_index_bits);
 
-                let mut groups = vec![Vec::new(); offset_table_size];
-                for &mix in &mixes {
-                    let offset_index = mix & offset_table_index_mask;
-                    groups[to_usize(offset_index)].push(mix);
-                }
+        let mut groups = vec![Vec::new(); offset_table_size];
+        for &mix in &mixes {
+            let offset_index = mix & offset_table_index_mask;
+            groups[to_usize(offset_index)].push(mix);
+        }
 
-                groups.retain(|group| !group.is_empty());
-                groups.sort_by_key(Vec::len);
+        groups.retain(|group| !group.is_empty());
+        groups.sort_by_key(Vec::len);
 
-                for base_shift in (direct_hash_bits - hash_bits)..=offset_index_bits {
-                    let start = Instant::now();
-                    let opt = offset_table_search(
-                        &groups,
-                        hash_bits,
-                        offset_index_bits,
-                        base_shift,
-                        &mut seen,
-                    );
-                    eprintln!("offset table search for offset_index_bits={offset_index_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
-                    if let Some(offset_table) = opt {
-                        compressor = Compressor {
-                            hash_bits,
-                            mix_shifts,
-                            base_shift_and_offset_table: Some((base_shift, offset_table)),
-                        };
-                        break 'compressor;
-                    }
-                }
+        for base_shift in (distinguishing_bits - hash_bits)..=offset_index_bits {
+            let start = Instant::now();
+            let opt =
+                offset_table_search(&groups, hash_bits, offset_index_bits, base_shift, &mut seen);
+            eprintln!("offset table search for offset_index_bits={offset_index_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
+            if let Some(offset_table) = opt {
+                return Some(Compressor {
+                    hash_bits,
+                    mix_shifts,
+                    base_shift_and_offset_table: Some((base_shift, offset_table)),
+                });
             }
         }
     }
 
-    let x = ExprBuilder();
-    let mix_reg = tac.push_expr(
-        x.sum(
-            sel_regs
-                .iter()
-                .zip(compressor.mix_shifts)
-                .map(|(&sel, left_shift)| x.shll(x.reg(sel), x.imm(left_shift)))
-                .collect(),
-        ),
-    );
-    let unmasked_hash_reg = match compressor.base_shift_and_offset_table {
-        Some((base_shift, offset_table)) => {
-            let offset_table = tables.push(offset_table);
-            tac.push_expr(x.add(
-                x.shrl(x.reg(mix_reg), x.imm(base_shift)),
-                x.table_get(
-                    offset_table,
-                    x.and(x.reg(mix_reg), x.table_index_mask(offset_table)),
-                ),
-            ))
-        }
-        None => mix_reg,
-    };
-    tac.push_expr(x.and(x.reg(unmasked_hash_reg), x.hash_mask()));
-    Some(CompressorSearchSolution {
-        tac,
-        tables,
-        hash_bits: compressor.hash_bits,
-    })
+    None
 }
 
-fn direct_compressor_search(min_hash_bits: u32, mixes: &[u32]) -> u32 {
-    let mut seen = HashSet::with_capacity(mixes.len());
+fn min_distinguishing_bits(min_hash_bits: u32, mixes: &[u32]) -> u32 {
+    let mut seen = HashSet::with_capacity(mixes.len() + 1);
     'hash_bits: for hash_bits in min_hash_bits..32 {
         let mask = table_index_mask(hash_bits);
         seen.clear();
+        seen.insert(0);
         for mix in mixes {
             if !seen.insert(mix & mask) {
                 continue 'hash_bits;

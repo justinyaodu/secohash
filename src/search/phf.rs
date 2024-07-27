@@ -54,16 +54,31 @@ impl Phf {
             key_table[0] = fake_key;
         }
 
+        let phf = Phf {
+            tac,
+            tables,
+            key_table,
+        };
+        phf.validate(spec);
+        phf
+    }
+
+    fn validate(&self, spec: &Spec) {
         let mut keys = Vec::new();
-        for (i, key) in key_table.iter().enumerate() {
+        for (i, key) in self.key_table.iter().enumerate() {
             let hash = if key.len() < spec.min_interpreted_key_len
                 || key.len() > spec.max_interpreted_key_len
             {
                 0
             } else {
-                Trace::new(&[key.clone()], &tac, &tables, Some(key_table.len()))[hash_reg][0]
+                Trace::new(
+                    &[key.clone()],
+                    &self.tac,
+                    &self.tables,
+                    Some(self.key_table.len()),
+                )[self.tac.last_reg()][0]
             };
-            if hash == i.try_into().unwrap() {
+            if to_usize(hash) == i {
                 keys.push(key.clone());
             }
         }
@@ -72,11 +87,5 @@ impl Phf {
             keys.into_iter().collect::<HashSet<_>>()
                 == spec.keys.iter().cloned().collect::<HashSet<_>>()
         );
-
-        Phf {
-            tac,
-            tables,
-            key_table,
-        }
     }
 }
