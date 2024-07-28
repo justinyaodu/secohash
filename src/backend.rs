@@ -193,7 +193,9 @@ const struct entry entries[] = {"
 uint32_t str_sum(const char* key, size_t len) {{
     uint32_t sum = 0;
     for (size_t i = 0; i < len; i++) {{
-        sum += key[i];
+        sum += key[i] << (i & 1);
+        // sum += key[i];
+        // sum = (sum << 5) - sum + key[i];
     }}
     return sum;
 }}

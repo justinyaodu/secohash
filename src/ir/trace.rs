@@ -22,7 +22,18 @@ impl Trace {
                     .map(|lane| keys[lane][to_usize(regs[r.0][lane])])
                     .collect(),
                 Instr::StrLen => keys.iter().map(|key| to_u32(key.len())).collect(),
-                Instr::StrSum => keys.iter().map(|key| key.iter().sum()).collect(),
+                Instr::StrSum => keys
+                    .iter()
+                    .map(|key| {
+                        let mut sum = 0u32;
+                        for (i, &x) in key.iter().enumerate() {
+                            sum = sum.wrapping_add(x << (i & 1));
+                            // sum = sum.wrapping_add(x);
+                            // sum = (sum << 5).wrapping_sub(sum).wrapping_add(x);
+                        }
+                        sum
+                    })
+                    .collect(),
                 Instr::TableGet(t, r) => {
                     regs[r.0].iter().map(|&i| tables[t][to_usize(i)]).collect()
                 }
