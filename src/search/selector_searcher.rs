@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    iter,
+};
 
 use crate::{
     combinatorics::{ChooseGen, LendingIterator},
@@ -90,7 +93,7 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
         keys_by_len.entry(key.len()).or_default().push(key.clone())
     }
 
-    let traces_by_len: HashMap<usize, (Trace, HashMap<Reg, usize>, Reg)> = keys_by_len
+    let traces_by_len: HashMap<usize, (Trace, HashMap<Reg, usize>, Vec<Reg>)> = keys_by_len
         .into_iter()
         .map(|(len, keys)| {
             let mut tac = Tac::new();
@@ -100,33 +103,34 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
             for i in 0..len {
                 reg_to_index.insert(Selector::Index(i).compile(&mut tac, &mut tables), i);
             }
-            let sum_reg = tac.push(Instr::StrSum);
+            let sum_regs = (0u8..32).map(|i| tac.push(Instr::StrSum(i))).collect();
             (
                 len,
                 (
                     Trace::new(&keys, &tac, &tables, None),
                     reg_to_index,
-                    sum_reg,
+                    sum_regs,
                 ),
             )
         })
         .collect();
 
-    for use_sum_reg in [false, true] {
+    // TODO: if all keys are the same length, only use Index and StrSum
+    // TODO: remove length if not necessary to distinguish keys
+    for sum_reg in iter::once(None).chain((0u8..32).map(Some)) {
         'num_tables: for num_tables in 1..=3 {
             let mut raw_tables = vec![vec![0u32; spec.max_interpreted_key_len + 1]; num_tables];
 
-            for (&len, &(ref trace, ref reg_to_index, sum_reg)) in &traces_by_len {
+            for (&len, (trace, reg_to_index, sum_regs)) in &traces_by_len {
                 let mut regs = vec![Reg(0); reg_to_index.len()];
                 for (&reg, &index) in reg_to_index {
                     regs[index] = reg;
                 }
                 let num_choices = usize::min(num_tables, regs.len());
-                let extra_regs = if use_sum_reg {
-                    vec![sum_reg]
-                } else {
-                    Vec::new()
-                };
+                let extra_regs: Vec<Reg> = sum_reg
+                    .map(|i| sum_regs[usize::from(i)])
+                    .into_iter()
+                    .collect();
                 let Some(chosen) = find_distinguishing_regs(trace, &regs, num_choices, &extra_regs)
                 else {
                     continue 'num_tables;
@@ -143,8 +147,8 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
             for raw_table in raw_tables {
                 sel_regs.push(Selector::Table(raw_table).compile(&mut tac, &mut tables));
             }
-            if use_sum_reg {
-                sel_regs.push(tac.push(Instr::StrSum));
+            if let Some(i) = sum_reg {
+                sel_regs.push(tac.push(Instr::StrSum(i)));
             }
             return Some(SelectorSearchSolution {
                 tac,

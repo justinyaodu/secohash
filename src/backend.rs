@@ -75,7 +75,7 @@ impl CBackend {
             Expr::Imm(n) => (n.to_string(), None),
             Expr::StrGet(ref i) => (format!("key[{}]", Self::compile_expr_rec(phf, i).0), None),
             Expr::StrLen => ("(uint32_t) len".into(), None),
-            Expr::StrSum => ("str_sum(key, len)".into(), None),
+            Expr::StrSum(m) => (format!("str_sum(key, len, {m})"), None),
             Expr::TableGet(Table(t), ref i) => {
                 (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), None)
             }
@@ -190,12 +190,10 @@ const struct entry entries[] = {"
         lines.push(format!(
             "}};
 
-uint32_t str_sum(const char* key, size_t len) {{
+uint32_t str_sum(const char* key, size_t len, uint8_t mask) {{
     uint32_t sum = 0;
     for (size_t i = 0; i < len; i++) {{
-        sum += key[i] << (i & 1);
-        // sum += key[i];
-        // sum = (sum << 5) - sum + key[i];
+        sum += key[i] << (i & mask);
     }}
     return sum;
 }}
