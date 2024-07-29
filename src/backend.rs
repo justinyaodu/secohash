@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 use crate::{
     ir::{remove_zero_shifts, BinOp, Expr, Instr, Table, Tac, Var},
@@ -68,6 +71,107 @@ impl CBackend {
         }
     }
 
+    fn format_add(x: &str, k: usize) -> String {
+        if k == 0 {
+            x.into()
+        } else {
+            format!("{x} + {k}")
+        }
+    }
+
+    fn format_shift(x: &str, k: u32) -> String {
+        if k == 0 {
+            x.into()
+        } else {
+            format!("({x} << {k})")
+        }
+    }
+
+    fn compile_str_sum(mask: u8) -> String {
+        let mut stride = 1;
+        while stride <= mask {
+            stride <<= 1;
+        }
+        let body = if (2..=4).contains(&stride) {
+            let mut lines = Vec::new();
+            for lane in 0..stride {
+                lines.push(format!("uint32_t sum_{lane} = 0;"));
+            }
+
+            lines.push("size_t i = 0;".into());
+            lines.push(format!(
+                "for (; i + {} < len; i += {stride}) {{",
+                stride - 1
+            ));
+            for lane in 0..stride {
+                lines.push(format!(
+                    "    sum_{lane} += key[{}];",
+                    Self::format_add("i", lane.into())
+                ));
+            }
+            lines.push("}".into());
+
+            let shifted_sums: Vec<String> = (1..stride)
+                .map(|lane| Self::format_shift(&format!("sum_{lane}"), (lane & mask).into()))
+                .collect();
+            lines.push(format!("sum_0 += {};", shifted_sums.join(" + ")));
+
+            if stride == 2 {
+                lines.extend([
+                    "if (i < len) {".into(),
+                    "    sum_0 += key[i];".into(),
+                    "}".into(),
+                ]);
+            } else {
+                /*
+                lines.push("switch (len - i) {".into());
+                for lane in (0..stride - 1).rev() {
+                    lines.push(format!("    case {}:", lane + 1));
+                    lines.push(format!(
+                        "        sum_{lane} += key[{}];",
+                        Self::format_add("i", lane.into())
+                    ));
+                }
+                lines.push("}".into());
+                */
+
+                lines.extend([
+                    "for (; i < len; i++) {".into(),
+                    format!("    sum_0 += key[i] << (i & {mask});"),
+                    "}".into(),
+                ]);
+            }
+
+            lines.push("return sum_0;".into());
+
+            lines
+        } else {
+            let maybe_shift = if stride == 1 {
+                "".into()
+            } else {
+                format!(" << (i & {mask})")
+            };
+
+            vec![
+                "uint32_t sum = 0;".into(),
+                "for (size_t i = 0; i < len; i++) {".into(),
+                format!("    sum += key[i]{};", maybe_shift),
+                "}".into(),
+                "return sum;".into(),
+            ]
+        };
+
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "uint32_t str_sum_{mask}(const char* key, size_t len) {{"
+        ));
+        for body_line in body {
+            lines.push(format!("    {body_line}"));
+        }
+        lines.push("}".into());
+        lines.join("\n")
+    }
+
     fn compile_expr_rec(phf: &Phf, expr: &Expr) -> (String, Option<BinOp>) {
         match *expr {
             Expr::Var(Var(i)) => (format!("x{i}"), None),
@@ -75,7 +179,7 @@ impl CBackend {
             Expr::Imm(n) => (n.to_string(), None),
             Expr::StrGet(ref i) => (format!("key[{}]", Self::compile_expr_rec(phf, i).0), None),
             Expr::StrLen => ("(uint32_t) len".into(), None),
-            Expr::StrSum(m) => (format!("str_sum(key, len, {m})"), None),
+            Expr::StrSum(m) => (format!("str_sum_{m}(key, len)"), None),
             Expr::TableGet(Table(t), ref i) => {
                 (format!("t{t}[{}]", Self::compile_expr_rec(phf, i).0), None)
             }
@@ -187,18 +291,24 @@ const struct entry entries[] = {"
             lines.push(format!("    {entry},"));
         }
 
+        lines.push("};".into());
+        lines.push("".into());
+
+        let mut str_sum_masks = HashSet::new();
+        for instr in tac.instrs() {
+            if let Instr::StrSum(mask) = *instr {
+                str_sum_masks.insert(mask);
+            }
+        }
+        let mut str_sum_masks: Vec<u8> = str_sum_masks.into_iter().collect();
+        str_sum_masks.sort();
+        for mask in str_sum_masks {
+            lines.push(Self::compile_str_sum(mask));
+            lines.push("".into());
+        }
+
         lines.push(format!(
-            "}};
-
-uint32_t str_sum(const char* key, size_t len, uint8_t mask) {{
-    uint32_t sum = 0;
-    for (size_t i = 0; i < len; i++) {{
-        sum += key[i] << (i & mask);
-    }}
-    return sum;
-}}
-
-uint32_t hash({}, {}) {{",
+            "uint32_t hash({}, {}) {{",
             key.with_unused_attribute(),
             len.with_unused_attribute()
         ));
