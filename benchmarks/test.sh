@@ -21,7 +21,9 @@ for dataset in datasets/*.txt; do
     bench_run="${bin}/${dataset_name}__${impl_name}/run"
     [ -f "${bench_run}" ] || continue
     output="${results}/${dataset_name}__${impl_name}.out"
+    #echo "${bench_run}"
     "${bench_run}" < "${shuffled}" > "${output}"
+    #valgrind "${bench_run}" < "${shuffled}" > "${output}"
   done
 
   diff --unified --from-file "${results}/${dataset_name}__"*.out

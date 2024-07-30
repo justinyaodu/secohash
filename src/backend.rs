@@ -92,12 +92,13 @@ impl CBackend {
         while stride <= mask {
             stride <<= 1;
         }
+
         let body = if (2..=4).contains(&stride) {
             let mut lines = Vec::new();
+
             for lane in 0..stride {
                 lines.push(format!("uint32_t sum_{lane} = 0;"));
             }
-
             lines.push("size_t i = 0;".into());
             lines.push(format!(
                 "for (; i + {} < len; i += {stride}) {{",
@@ -123,18 +124,6 @@ impl CBackend {
                     "}".into(),
                 ]);
             } else {
-                /*
-                lines.push("switch (len - i) {".into());
-                for lane in (0..stride - 1).rev() {
-                    lines.push(format!("    case {}:", lane + 1));
-                    lines.push(format!(
-                        "        sum_{lane} += key[{}];",
-                        Self::format_add("i", lane.into())
-                    ));
-                }
-                lines.push("}".into());
-                */
-
                 lines.extend([
                     "for (; i < len; i++) {".into(),
                     format!("    sum_0 += key[i] << (i & {mask});"),

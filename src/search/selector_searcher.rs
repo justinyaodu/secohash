@@ -16,6 +16,19 @@ pub struct SelectorSearchSolution {
     pub sel_regs: Vec<Reg>,
 }
 
+// index selectors
+// if different lengths: len and arithmetic selectors
+
+// if different lengths: table selectors, len if necessary
+// optimizer: remove tables where every value is the same
+
+// sum selector
+// if different lengths: table selectors, otherwise index selectors
+// for sum selector mask in 0..32
+//     
+// hm is it faster when mask is 0? yes, significantly
+// 
+
 pub fn selector_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     let sol = basic_search(spec);
     if sol.is_some() {
@@ -117,7 +130,7 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
 
     // TODO: if all keys are the same length, only use Index and StrSum
     // TODO: remove length if not necessary to distinguish keys
-    for sum_reg in iter::once(None).chain((0u8..32).map(Some)) {
+    for sum_reg in iter::once(None).chain((2u8..32).map(Some)) {
         'num_tables: for num_tables in 1..=3 {
             let mut raw_tables = vec![vec![0u32; spec.max_interpreted_key_len + 1]; num_tables];
 
