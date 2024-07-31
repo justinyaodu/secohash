@@ -112,26 +112,42 @@ impl CBackend {
             }
             lines.push("}".into());
 
-            let shifted_sums: Vec<String> = (1..stride)
+            lines.push("switch (len - i) {".into());
+            for lane in (0..stride - 1).rev() {
+                lines.push(format!("    case {}:", lane + 1));
+                lines.push(format!("        sum_{lane} += key[{}];", Self::format_add("i", lane.into())));
+                lines.push("        __attribute__((fallthrough));".into());
+            }
+            lines.push("   default:".into());
+            lines.push("}".into());
+
+            let shifted_sums: Vec<String> = (0..stride)
                 .map(|lane| Self::format_shift(&format!("sum_{lane}"), (lane & mask).into()))
                 .collect();
-            lines.push(format!("sum_0 += {};", shifted_sums.join(" + ")));
+            lines.push(format!("uint32_t sum = {};", shifted_sums.join(" + ")));
+
+            /*
+            let shifted_sums: Vec<String> = (0..stride)
+                .map(|lane| Self::format_shift(&format!("sum_{lane}"), (lane & mask).into()))
+                .collect();
+            lines.push(format!("uint32_t sum = {};", shifted_sums.join(" + ")));
 
             if stride == 2 {
                 lines.extend([
                     "if (i < len) {".into(),
-                    "    sum_0 += key[i];".into(),
+                    "    sum += key[i];".into(),
                     "}".into(),
                 ]);
             } else {
                 lines.extend([
                     "for (; i < len; i++) {".into(),
-                    format!("    sum_0 += key[i] << (i & {mask});"),
+                    format!("    sum += key[i] << (i & {mask});"),
                     "}".into(),
                 ]);
             }
+            */
 
-            lines.push("return sum_0;".into());
+            lines.push("return sum;".into());
 
             lines
         } else {
