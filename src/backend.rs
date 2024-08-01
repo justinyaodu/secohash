@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Display,
 };
 
@@ -88,54 +88,85 @@ impl CBackend {
     }
 
     fn compile_str_sum(mask: u8) -> String {
-        let mut stride = 1;
-        while stride <= mask {
-            stride <<= 1;
+        let mut shift_stride = 1;
+        while shift_stride <= mask {
+            shift_stride <<= 1;
         }
 
-        let body = if (2..=4).contains(&stride) {
+        let unroll = 4;
+
+        let body = if unroll > 1 {
             let mut lines = Vec::new();
 
-            for lane in 0..stride {
+            for lane in 0..unroll {
                 lines.push(format!("uint32_t sum_{lane} = 0;"));
             }
             lines.push("size_t i = 0;".into());
             lines.push(format!(
-                "for (; i + {} < len; i += {stride}) {{",
-                stride - 1
+                "for (; i + {} < len; i += {unroll}) {{",
+                unroll - 1
             ));
-            for lane in 0..stride {
+            for lane in 0..unroll {
                 lines.push(format!(
-                    "    sum_{lane} += key[{}];",
-                    Self::format_add("i", lane.into())
+                    "    sum_{lane} += key[{}]{};",
+                    Self::format_add("i", lane.into()),
+                    if unroll >= shift_stride {
+                        "".into()
+                    } else {
+                        format!("<< (i & {mask})")
+                    }
                 ));
             }
             lines.push("}".into());
 
-            let shifted_sums: Vec<String> = (1..stride)
-                .map(|lane| Self::format_shift(&format!("sum_{lane}"), (lane & mask).into()))
-                .collect();
-            lines.push(format!("sum_0 += {};", shifted_sums.join(" + ")));
+            let mut shifts_and_sums: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
+            for lane in 0..unroll {
+                let shift = lane & mask;
+                shifts_and_sums.entry(shift).or_default().push(lane);
+            }
 
-            if stride == 2 {
+            let shifted_sums: Vec<String> = shifts_and_sums
+                .into_iter()
+                .map(|(shift, sums)| {
+                    let strs: Vec<String> = sums.into_iter().map(|i| format!("sum_{i}")).collect();
+                    let mut joined = strs.join(" + ");
+                    if strs.len() > 1 {
+                        joined = format!("({joined})");
+                    }
+                    if shift > 0 {
+                        joined = format!("({joined} << {shift})");
+                    }
+                    joined
+                })
+                .collect();
+
+            let compute_sum = format!("uint32_t sum = {};", shifted_sums.join(" + "));
+            lines.push(compute_sum);
+
+            if unroll == 2 {
                 lines.extend([
                     "if (i < len) {".into(),
-                    "    sum_0 += key[i];".into(),
+                    "    sum += key[i];".into(),
                     "}".into(),
                 ]);
             } else {
+                let maybe_shift = if shift_stride == 1 {
+                    "".into()
+                } else {
+                    format!(" << (i & {mask})")
+                };
                 lines.extend([
                     "for (; i < len; i++) {".into(),
-                    format!("    sum_0 += key[i] << (i & {mask});"),
+                    format!("    sum += key[i]{maybe_shift};"),
                     "}".into(),
                 ]);
             }
 
-            lines.push("return sum_0;".into());
+            lines.push("return sum;".into());
 
             lines
         } else {
-            let maybe_shift = if stride == 1 {
+            let maybe_shift = if shift_stride == 1 {
                 "".into()
             } else {
                 format!(" << (i & {mask})")
@@ -144,13 +175,14 @@ impl CBackend {
             vec![
                 "uint32_t sum = 0;".into(),
                 "for (size_t i = 0; i < len; i++) {".into(),
-                format!("    sum += key[i]{};", maybe_shift),
+                format!("    sum += key[i]{maybe_shift};"),
                 "}".into(),
                 "return sum;".into(),
             ]
         };
 
         let mut lines = Vec::new();
+        lines.push("__attribute__((optimize(\"no-tree-vectorize\")))".into());
         lines.push(format!(
             "uint32_t str_sum_{mask}(const char* key, size_t len) {{"
         ));
