@@ -38,7 +38,7 @@ pub fn search(spec: &Spec) -> Option<Phf> {
     eprintln!("mixer search took {} us", start.elapsed().as_micros());
 
     let mix_reg = mixer.compile(&mut tac, &sel_regs);
-    let unmasked_hash_reg = if mixer.mix_bits == spec.min_hash_bits {
+    let unmasked_hash_reg = if mixer.mix_bits == spec.min_hash_bits && !mixer.uses_index_zero {
         mix_reg
     } else {
         let start = Instant::now();

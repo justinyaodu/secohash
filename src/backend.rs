@@ -90,7 +90,7 @@ impl CBackend {
                         if shift_later {
                             x.imm(0)
                         } else {
-                            x.and(x.var("i".into()), x.imm(mask))
+                            x.and(x.add(x.var("i".into()), x.imm(lane)), x.imm(mask))
                         }
                     )
                     .cleaned()
