@@ -18,6 +18,10 @@ use selector_searcher::SelectorSearchSolution;
 use crate::ir::ExprBuilder;
 use crate::ir::Trace;
 use crate::spec::Spec;
+use crate::util::table_index_mask;
+use crate::util::table_size;
+use crate::util::to_u32;
+use crate::util::to_usize;
 
 pub fn search(spec: &Spec) -> Option<Phf> {
     let start = Instant::now();
@@ -38,8 +42,24 @@ pub fn search(spec: &Spec) -> Option<Phf> {
     eprintln!("mixer search took {} us", start.elapsed().as_micros());
 
     let mix_reg = mixer.compile(&mut tac, &sel_regs);
-    let unmasked_hash_reg = if mixer.mix_bits == spec.min_hash_bits && !mixer.uses_index_zero {
-        mix_reg
+    let unmasked_hash_reg = if mixer.mix_bits <= spec.min_hash_bits {
+        let size = table_size(spec.min_hash_bits);
+        let mask = table_index_mask(spec.min_hash_bits);
+
+        let mut seen = vec![false; size];
+        for &mix in &mixer.mixes {
+            seen[to_usize(mix & mask)] = true;
+        }
+        let mut rotation = None;
+        for i in 0..size {
+            if !seen[0usize.wrapping_sub(i) & to_usize(mask)] {
+                rotation = Some(to_u32(i));
+                break;
+            }
+        }
+        let rotation = rotation.unwrap();
+        let x = ExprBuilder();
+        tac.push_expr(x.add(x.reg(mix_reg), x.imm(rotation)))
     } else {
         let start = Instant::now();
         let compressor = Compressor::search(spec, &mixer)?;

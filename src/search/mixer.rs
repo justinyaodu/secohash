@@ -6,7 +6,6 @@ pub struct Mixer {
     pub shifts: Vec<u32>,
     pub mix_bits: u32,
     pub mixes: Vec<u32>,
-    pub uses_index_zero: bool,
 }
 
 impl Mixer {
@@ -60,7 +59,6 @@ impl Mixer {
             shifts,
             mix_bits,
             mixes,
-            uses_index_zero: masked_mixes.contains(&0),
         })
     }
 

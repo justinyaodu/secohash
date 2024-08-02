@@ -10,7 +10,7 @@ use c_expr::{CBinOp, CExpr, CExprBuilder};
 use c_str_formatter::CStrFormatter;
 
 use crate::{
-    ir::{remove_zero_shifts, BinOp, Expr, Instr, Table, Tac, Var},
+    ir::{constant_propagation, BinOp, Expr, Instr, Table, Tac, Var},
     search::Phf,
     spec::Spec,
     util::to_u32,
@@ -213,7 +213,7 @@ impl Display for Declaration {
 impl Backend for CBackend {
     fn emit(&self, spec: &Spec, phf: &Phf) -> String {
         let expr = phf.tac.unflatten_tree(phf.tac.last_reg(), &HashMap::new());
-        let expr = remove_zero_shifts(expr);
+        let expr = constant_propagation(expr);
         let mut tac = Tac::new();
         expr.flatten(&mut tac, &HashMap::new());
         let (tac, _) = tac.local_value_numbering();

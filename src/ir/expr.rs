@@ -126,7 +126,10 @@ impl ExprBuilder {
     }
 
     pub fn sum(&self, exprs: Vec<Expr>) -> Expr {
-        exprs.into_iter().reduce(|a, b| self.add(a, b)).unwrap()
+        exprs
+            .into_iter()
+            .reduce(|a, b| self.add(a, b))
+            .unwrap_or(self.imm(0))
     }
 }
 
