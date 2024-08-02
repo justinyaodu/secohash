@@ -34,7 +34,8 @@ pub fn search(spec: &Spec) -> Option<Phf> {
         mut tables,
         sel_regs,
     } = selector_search(spec)?;
-    */
+     */
+    // /*
     let sels = Selector::search(spec)?;
     eprintln!("found selectors: {sels:?}");
     let mut tac = Tac::new();
@@ -43,6 +44,7 @@ pub fn search(spec: &Spec) -> Option<Phf> {
         .into_iter()
         .map(|sel| sel.compile(&mut tac, &mut tables))
         .collect();
+    // */
     eprintln!("selector search took {} us", start.elapsed().as_micros());
 
     let start = Instant::now();
