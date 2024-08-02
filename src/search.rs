@@ -36,6 +36,7 @@ pub fn search(spec: &Spec) -> Option<Phf> {
     } = selector_search(spec)?;
     */
     let sels = Selector::search(spec)?;
+    eprintln!("found selectors: {sels:?}");
     let mut tac = Tac::new();
     let mut tables = Tables::new();
     let sel_regs: Vec<_> = sels
@@ -52,6 +53,7 @@ pub fn search(spec: &Spec) -> Option<Phf> {
     let start = Instant::now();
     let mixer = Mixer::search(&sel_cols)?;
     eprintln!("mixer search took {} us", start.elapsed().as_micros());
+    eprintln!("mixer has {} bits", mixer.mix_bits);
 
     let mix_reg = mixer.compile(&mut tac, &sel_regs);
     let unmasked_hash_reg = if mixer.mix_bits <= spec.min_hash_bits {

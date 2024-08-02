@@ -87,7 +87,9 @@ impl Selector {
     pub fn search(spec: &Spec) -> Option<Vec<Selector>> {
         let pos_limit = 32;
 
-        let mut searcher = SelectorSearcher::new(&spec.interpreted_keys);
+        let keys = &spec.interpreted_keys;
+
+        let mut searcher = SelectorSearcher::new(keys);
 
         let mut len_sels = Vec::new();
         let len_not_constant = spec.min_interpreted_key_len < spec.max_interpreted_key_len;
@@ -144,20 +146,58 @@ impl Selector {
                         break 'choices choices;
                     }
 
-                    if let Some(choices) =
+                    if let Some(mut choices) =
                         searcher.find_distinguishing(&len_sels, &safe_index_sels, num_choices, None)
                     {
+                        choices.rotate_right(1);
                         break 'choices choices;
                     }
 
-                    if let Some(choices) = searcher.find_distinguishing(
+                    if let Some(mut choices) = searcher.find_distinguishing(
                         &len_sels,
                         &index_arith_sels,
                         num_choices,
                         None,
                     ) {
+                        choices.rotate_right(1);
                         break 'choices choices;
                     }
+                }
+            }
+
+            if len_not_constant {
+                'num_choices: for num_choices in 1..=search_exponent {
+                    let mut tables = vec![vec![0; spec.max_interpreted_key_len + 1]; num_choices];
+                    let mut group_start = 0;
+                    for i in 0..=keys.len() {
+                        if i == keys.len() || keys[i].len() != keys[group_start].len() {
+                            let key_len = keys[group_start].len();
+                            if let Some(choices) = searcher.find_distinguishing(
+                                &len_sels,
+                                &all_index_sels[..usize::min(key_len, pos_limit)],
+                                num_choices,
+                                Some((group_start, i)),
+                            ) {
+                                for table_index in 0..num_choices {
+                                    let Selector::Index(table_value) =
+                                        searcher.selectors[choices[table_index]]
+                                    else {
+                                        panic!();
+                                    };
+                                    tables[table_index][key_len] = table_value;
+                                }
+                            } else {
+                                continue 'num_choices;
+                            }
+                            group_start = i;
+                        }
+                    }
+
+                    let mut sels = vec![Selector::Len];
+                    for table in tables {
+                        sels.push(Selector::Table(table));
+                    }
+                    return Some(sels);
                 }
             }
 
@@ -189,64 +229,6 @@ impl Selector {
                 .collect(),
         )
     }
-
-    /*
-    fn find_distinguishing(
-        keys: &[Vec<u32>],
-        sels: &[Selector],
-        cols: &mut [Vec<u32>],
-        already_chosen: &[usize],
-        choosable: &[usize],
-        num_choices: usize,
-        row_range: Option<(usize, usize)>,
-        seen: &mut HashSet<Vec<u32>>,
-    ) -> Option<Vec<usize>> {
-        if num_choices > choosable.len() {
-            return None;
-        }
-
-        let row_range = row_range.unwrap_or((0, keys.len()));
-
-        let mut choices: Vec<_> = iter::repeat(0)
-            .take(num_choices)
-            .chain(already_chosen.iter().copied())
-            .collect();
-        let mut choose_gen = ChooseGen::new(choosable.len(), num_choices);
-        while let Some(chosen_indices) = choose_gen.next() {
-            for (i, &chosen_index) in chosen_indices.iter().enumerate() {
-                let choice = choosable[chosen_index];
-                choices[i] = choice;
-            }
-            // for &choice in &choices {
-            //     if cols[choice].is_empty() {
-            //         cols[choice] = sels[choice].eval(keys);
-            //         eprintln!("evaluated {:?}", sels[choice]);
-            //     }
-            // }
-            if Self::distinguishes(cols, &choices, row_range, seen) {
-                return Some(choices);
-            }
-        }
-        None
-    }
-
-    fn distinguishes(
-        cols: &[Vec<u32>],
-        choices: &[usize],
-        row_range: (usize, usize),
-        seen: &mut HashSet<Vec<u32>>,
-    ) -> bool {
-        seen.clear();
-        let (start_row, end_row) = row_range;
-        for row in start_row..end_row {
-            let vec = choices.iter().map(|&choice| cols[choice][row]).collect();
-            if !seen.insert(vec) {
-                return false;
-            }
-        }
-        true
-    }
-    */
 }
 
 struct SelectorSearcher<'a> {
@@ -291,9 +273,9 @@ impl SelectorSearcher<'_> {
             .chain(already_chosen.iter().copied())
             .collect();
         let mut choose_gen = ChooseGen::new(choosable.len(), num_choices);
-        while let Some(chosen_indices) = choose_gen.next() {
-            for (i, &chosen_index) in chosen_indices.iter().enumerate() {
-                choices[i] = choosable[chosen_index];
+        while let Some(choosable_indices) = choose_gen.next() {
+            for (i, &choosable_index) in choosable_indices.iter().enumerate() {
+                choices[i] = choosable[choosable_index];
             }
             if self.distinguishes(&choices, row_range) {
                 return Some(choices);
