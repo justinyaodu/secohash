@@ -8,6 +8,7 @@ use crate::{
     ir::{Instr, Reg, Tables, Tac, Trace},
     search::selector::Selector,
     spec::Spec,
+    util::{to_u32, to_usize},
 };
 
 pub struct SelectorSearchSolution {
@@ -25,9 +26,9 @@ pub struct SelectorSearchSolution {
 // sum selector
 // if different lengths: table selectors, otherwise index selectors
 // for sum selector mask in 0..32
-//     
+//
 // hm is it faster when mask is 0? yes, significantly
-// 
+//
 
 pub fn selector_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     let sol = basic_search(spec);
@@ -47,15 +48,15 @@ fn basic_search(spec: &Spec) -> Option<SelectorSearchSolution> {
     let mut sels_1 = Vec::new();
     sels_1.push(Selector::Len);
     for i in 0..index_bound {
-        sels_1.push(Selector::Index(i));
+        sels_1.push(Selector::Index(to_u32(i)));
     }
 
     let mut sels_2 = Vec::new();
     for i in 1..=index_bound {
-        sels_2.push(Selector::Sub(i));
+        sels_2.push(Selector::Sub(to_u32(i)));
     }
     for i in 0..index_bound {
-        sels_2.push(Selector::And(i));
+        sels_2.push(Selector::And(to_u32(i)));
     }
     for i in 1..32 {
         if (spec.max_interpreted_key_len >> i) == 0 {
@@ -114,9 +115,9 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
 
             let mut reg_to_index = HashMap::new();
             for i in 0..len {
-                reg_to_index.insert(Selector::Index(i).compile(&mut tac, &mut tables), i);
+                reg_to_index.insert(Selector::Index(to_u32(i)).compile(&mut tac, &mut tables), i);
             }
-            let sum_regs = (0u8..32).map(|i| tac.push(Instr::StrSum(i))).collect();
+            let sum_regs = (0u32..32).map(|i| tac.push(Instr::StrSum(i))).collect();
             (
                 len,
                 (
@@ -130,7 +131,9 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
 
     // TODO: if all keys are the same length, only use Index and StrSum
     // TODO: remove length if not necessary to distinguish keys
-    for sum_reg in iter::once(None).chain((2u8..32).map(Some)) {
+    // TODO: only use 0, 1, 3, 7, 15 as masks?
+    // TODO:
+    for sum_reg in iter::once(None).chain((1u32..32).map(Some)) {
         'num_tables: for num_tables in 1..=3 {
             let mut raw_tables = vec![vec![0u32; spec.max_interpreted_key_len + 1]; num_tables];
 
@@ -140,10 +143,8 @@ fn table_search(spec: &Spec) -> Option<SelectorSearchSolution> {
                     regs[index] = reg;
                 }
                 let num_choices = usize::min(num_tables, regs.len());
-                let extra_regs: Vec<Reg> = sum_reg
-                    .map(|i| sum_regs[usize::from(i)])
-                    .into_iter()
-                    .collect();
+                let extra_regs: Vec<Reg> =
+                    sum_reg.map(|i| sum_regs[to_usize(i)]).into_iter().collect();
                 let Some(chosen) = find_distinguishing_regs(trace, &regs, num_choices, &extra_regs)
                 else {
                     continue 'num_tables;

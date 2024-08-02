@@ -27,7 +27,7 @@ impl Trace {
                     .map(|key| {
                         let mut sum = 0u32;
                         for (i, &x) in key.iter().enumerate() {
-                            sum = sum.wrapping_add(x << (i & usize::from(m)));
+                            sum = sum.wrapping_add(x << (to_u32(i) & m));
                         }
                         sum
                     })

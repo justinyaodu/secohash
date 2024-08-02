@@ -266,10 +266,10 @@ const struct entry entries[] = {"
                 str_sum_masks.insert(mask);
             }
         }
-        let mut str_sum_masks: Vec<u8> = str_sum_masks.into_iter().collect();
+        let mut str_sum_masks: Vec<u32> = str_sum_masks.into_iter().collect();
         str_sum_masks.sort();
         for mask in str_sum_masks {
-            lines.push(Self::compile_str_sum(mask.into()));
+            lines.push(Self::compile_str_sum(mask));
             lines.push("".into());
         }
 
@@ -282,8 +282,13 @@ const struct entry entries[] = {"
         {
             let min = spec.min_interpreted_key_len;
             let max = spec.max_interpreted_key_len;
+            let condition = if min == max {
+                format!("len != {min}")
+            } else {
+                format!("len < {min} || len > {max}")
+            };
             lines.push(format!(
-                "    if (len < {min} || len > {max}) {{
+                "    if ({condition}) {{
         return 0;
     }}"
             ));

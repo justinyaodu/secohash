@@ -12,10 +12,13 @@ use compressor::Compressor;
 use compressor_searcher::CompressorSearchSolution;
 use mixer::Mixer;
 pub use phf::Phf;
+use selector::Selector;
 use selector_searcher::selector_search;
 use selector_searcher::SelectorSearchSolution;
 
 use crate::ir::ExprBuilder;
+use crate::ir::Tables;
+use crate::ir::Tac;
 use crate::ir::Trace;
 use crate::spec::Spec;
 use crate::util::table_index_mask;
@@ -25,11 +28,20 @@ use crate::util::to_usize;
 
 pub fn search(spec: &Spec) -> Option<Phf> {
     let start = Instant::now();
+    /*
     let SelectorSearchSolution {
         mut tac,
         mut tables,
         sel_regs,
     } = selector_search(spec)?;
+    */
+    let sels = Selector::search(spec)?;
+    let mut tac = Tac::new();
+    let mut tables = Tables::new();
+    let sel_regs: Vec<_> = sels
+        .into_iter()
+        .map(|sel| sel.compile(&mut tac, &mut tables))
+        .collect();
     eprintln!("selector search took {} us", start.elapsed().as_micros());
 
     let start = Instant::now();

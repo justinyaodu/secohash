@@ -10,7 +10,7 @@ pub enum Instr {
     Imm(u32),
     StrGet(Reg),
     StrLen,
-    StrSum(u8),
+    StrSum(u32),
     TableGet(Table, Reg),
     TableIndexMask(Table),
     HashMask,

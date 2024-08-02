@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::{
     ir::{Tables, Tac, Trace},
     spec::Spec,
-    util::to_usize,
+    util::{to_u32, to_usize},
 };
 
 use super::compressor_searcher::CompressorSearchSolution;
@@ -66,19 +66,21 @@ impl Phf {
     fn validate(&self, spec: &Spec) {
         let mut keys = Vec::new();
         for (i, key) in self.key_table.iter().enumerate() {
-            let hash = if key.len() < spec.min_interpreted_key_len
-                || key.len() > spec.max_interpreted_key_len
-            {
-                0
-            } else {
-                Trace::new(
-                    &[key.clone()],
-                    &self.tac,
-                    &self.tables,
-                    Some(self.key_table.len()),
-                )[self.tac.last_reg()][0]
-            };
-            if to_usize(hash) == i {
+            let is_real_key = key.is_empty() == (i == 0);
+            if is_real_key {
+                let hash = if key.len() < spec.min_interpreted_key_len
+                    || key.len() > spec.max_interpreted_key_len
+                {
+                    0
+                } else {
+                    Trace::new(
+                        &[key.clone()],
+                        &self.tac,
+                        &self.tables,
+                        Some(self.key_table.len()),
+                    )[self.tac.last_reg()][0]
+                };
+                assert!(to_u32(i) == hash);
                 keys.push(key.clone());
             }
         }

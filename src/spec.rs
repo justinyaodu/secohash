@@ -17,6 +17,8 @@ impl Spec {
         if interpreted_keys.is_empty() {
             interpreted_keys.push(vec!['!' as u32]);
         }
+        interpreted_keys.sort();
+        interpreted_keys.sort_by_key(Vec::len);
 
         let min_hash_table_size = interpreted_keys.len() + 1;
         let mut min_hash_bits = 1;

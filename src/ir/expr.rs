@@ -12,7 +12,7 @@ pub enum Expr {
     Imm(u32),
     StrGet(Box<Expr>),
     StrLen,
-    StrSum(u8),
+    StrSum(u32),
     TableGet(Table, Box<Expr>),
     TableIndexMask(Table),
     HashMask,
@@ -85,7 +85,7 @@ impl ExprBuilder {
         Expr::StrLen
     }
 
-    pub fn str_sum(&self, m: u8) -> Expr {
+    pub fn str_sum(&self, m: u32) -> Expr {
         Expr::StrSum(m)
     }
 
