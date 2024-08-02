@@ -20,7 +20,7 @@ pub enum Selector {
 
 impl Selector {
     fn eval(&self, keys: &[Vec<u32>]) -> Vec<u32> {
-        let mut buf = vec![0u32; keys.len()];
+        let mut buf = vec![0; keys.len()];
         match *self {
             Selector::Len => {
                 for (i, key) in keys.iter().enumerate() {
@@ -87,9 +87,7 @@ impl Selector {
     pub fn search(spec: &Spec) -> Option<Vec<Selector>> {
         let pos_limit = 32;
 
-        let keys = &spec.interpreted_keys;
-
-        let mut searcher = SelectorSearcher::new(keys);
+        let mut searcher = SelectorSearcher::new(spec);
 
         let mut len_sels = Vec::new();
         let len_not_constant = spec.min_interpreted_key_len < spec.max_interpreted_key_len;
@@ -165,39 +163,15 @@ impl Selector {
                 }
             }
 
-            let len_groups = Self::len_groups(keys);
-
             if len_not_constant {
-                'num_choices: for num_choices in 1..=search_exponent {
-                    let mut tables = vec![vec![0; spec.max_interpreted_key_len + 1]; num_choices];
-                    for &(group_start, group_end) in &len_groups {
-                        let key_len = keys[group_start].len();
-                        let num_index_sels = usize::min(key_len, pos_limit);
-                        let actual_num_choices = usize::min(num_choices, num_index_sels);
-                        if let Some(choices) = searcher.find_distinguishing(
-                            &len_sels,
-                            &all_index_sels[..num_index_sels],
-                            actual_num_choices,
-                            Some((group_start, group_end)),
-                        ) {
-                            for table_index in 0..actual_num_choices {
-                                let Selector::Index(table_value) =
-                                    searcher.selectors[choices[table_index]]
-                                else {
-                                    panic!();
-                                };
-                                tables[table_index][key_len] = table_value;
-                            }
-                        } else {
-                            continue 'num_choices;
-                        }
+                for num_choices in 1..=search_exponent {
+                    if let Some(table_sels) =
+                        searcher.table_search(&len_sels, &all_index_sels, num_choices)
+                    {
+                        let mut sels = vec![Selector::Len];
+                        sels.extend(table_sels);
+                        return Some(sels);
                     }
-
-                    let mut sels = vec![Selector::Len];
-                    for table in tables {
-                        sels.push(Selector::Table(table));
-                    }
-                    return Some(sels);
                 }
             }
 
@@ -207,39 +181,18 @@ impl Selector {
             }
 
             for &sum_sel in &sum_sels {
-                'num_choices: for num_choices in 0..=search_exponent {
+                for num_choices in 0..=search_exponent {
                     if len_not_constant {
-                        let mut tables =
-                            vec![vec![0; spec.max_interpreted_key_len + 1]; num_choices];
-                        for &(group_start, group_end) in &len_groups {
-                            let key_len = keys[group_start].len();
-                            let num_index_sels = usize::min(key_len, pos_limit);
-                            let actual_num_choices = usize::min(num_choices, num_index_sels);
-                            if let Some(choices) = searcher.find_distinguishing(
-                                &[len_sels[0], sum_sel],
-                                &all_index_sels[..num_index_sels],
-                                actual_num_choices,
-                                Some((group_start, group_end)),
-                            ) {
-                                for table_index in 0..actual_num_choices {
-                                    let Selector::Index(table_value) =
-                                        searcher.selectors[choices[table_index]]
-                                    else {
-                                        panic!();
-                                    };
-                                    tables[table_index][key_len] = table_value;
-                                }
-                            } else {
-                                continue 'num_choices;
-                            }
+                        if let Some(table_sels) = searcher.table_search(
+                            &[sum_sel, len_sels[0]],
+                            &all_index_sels,
+                            num_choices,
+                        ) {
+                            let mut sels = vec![Selector::Len];
+                            sels.extend(table_sels);
+                            sels.push(searcher.selectors[sum_sel].clone());
+                            return Some(sels);
                         }
-
-                        let mut sels = vec![Selector::Len];
-                        for table in tables {
-                            sels.push(Selector::Table(table));
-                        }
-                        sels.push(searcher.selectors[sum_sel].clone());
-                        return Some(sels);
                     } else if let Some(choices) = searcher.find_distinguishing(
                         &[sum_sel],
                         &safe_index_sels,
@@ -261,31 +214,24 @@ impl Selector {
                 .collect(),
         )
     }
-
-    fn len_groups(keys: &[Vec<u32>]) -> Vec<(usize, usize)> {
-        let mut groups = Vec::new();
-        let mut group_start = 0;
-        for i in 0..=keys.len() {
-            if i == keys.len() || keys[i].len() != keys[group_start].len() {
-                groups.push((group_start, i));
-                group_start = i;
-            }
-        }
-        groups
-    }
 }
 
 struct SelectorSearcher<'a> {
+    spec: &'a Spec,
     keys: &'a [Vec<u32>],
+    len_groups: Vec<(usize, usize)>,
     selectors: Vec<Selector>,
     cols: Vec<Vec<u32>>,
     seen: HashSet<Vec<u32>>,
 }
 
 impl SelectorSearcher<'_> {
-    fn new(keys: &[Vec<u32>]) -> SelectorSearcher {
+    fn new(spec: &Spec) -> SelectorSearcher {
+        let keys = &spec.interpreted_keys;
         SelectorSearcher {
+            spec,
             keys,
+            len_groups: Self::len_groups(keys),
             selectors: Vec::new(),
             cols: Vec::new(),
             seen: HashSet::with_capacity(keys.len()),
@@ -341,5 +287,48 @@ impl SelectorSearcher<'_> {
             }
         }
         true
+    }
+
+    fn table_search(
+        &mut self,
+        already_chosen: &[usize],
+        all_index_sels: &[usize],
+        num_choices: usize,
+    ) -> Option<Vec<Selector>> {
+        let mut tables = vec![vec![0; self.spec.max_interpreted_key_len + 1]; num_choices];
+        for (group_start, group_end) in self.len_groups.clone() {
+            let key_len = self.keys[group_start].len();
+            let num_index_sels = usize::min(key_len, all_index_sels.len());
+            let actual_num_choices = usize::min(num_choices, num_index_sels);
+            if let Some(choices) = self.find_distinguishing(
+                already_chosen,
+                &all_index_sels[..num_index_sels],
+                actual_num_choices,
+                Some((group_start, group_end)),
+            ) {
+                for table_index in 0..actual_num_choices {
+                    let Selector::Index(table_value) = self.selectors[choices[table_index]] else {
+                        panic!();
+                    };
+                    tables[table_index][key_len] = table_value;
+                }
+            } else {
+                return None;
+            }
+        }
+
+        Some(tables.into_iter().map(Selector::Table).collect())
+    }
+
+    fn len_groups(keys: &[Vec<u32>]) -> Vec<(usize, usize)> {
+        let mut groups = Vec::new();
+        let mut group_start = 0;
+        for i in 1..=keys.len() {
+            if i == keys.len() || keys[i].len() != keys[group_start].len() {
+                groups.push((group_start, i));
+                group_start = i;
+            }
+        }
+        groups
     }
 }

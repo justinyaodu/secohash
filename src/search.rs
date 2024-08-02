@@ -4,17 +4,6 @@ mod generational_bit_set;
 mod mixer;
 mod phf;
 mod selector;
-mod selector_searcher;
-
-use std::time::Instant;
-
-use compressor::Compressor;
-use compressor_searcher::CompressorSearchSolution;
-use mixer::Mixer;
-pub use phf::Phf;
-use selector::Selector;
-use selector_searcher::selector_search;
-use selector_searcher::SelectorSearchSolution;
 
 use crate::ir::ExprBuilder;
 use crate::ir::Tables;
@@ -25,17 +14,15 @@ use crate::util::table_index_mask;
 use crate::util::table_size;
 use crate::util::to_u32;
 use crate::util::to_usize;
+use compressor::Compressor;
+use compressor_searcher::CompressorSearchSolution;
+use mixer::Mixer;
+pub use phf::Phf;
+use selector::Selector;
+use std::time::Instant;
 
 pub fn search(spec: &Spec) -> Option<Phf> {
     let start = Instant::now();
-    /*
-    let SelectorSearchSolution {
-        mut tac,
-        mut tables,
-        sel_regs,
-    } = selector_search(spec)?;
-     */
-    // /*
     let sels = Selector::search(spec)?;
     eprintln!("found selectors: {sels:?}");
     let mut tac = Tac::new();
@@ -44,7 +31,6 @@ pub fn search(spec: &Spec) -> Option<Phf> {
         .into_iter()
         .map(|sel| sel.compile(&mut tac, &mut tables))
         .collect();
-    // */
     eprintln!("selector search took {} us", start.elapsed().as_micros());
 
     let start = Instant::now();
