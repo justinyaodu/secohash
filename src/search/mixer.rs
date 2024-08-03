@@ -20,7 +20,7 @@ impl Mixer {
             'shift: for shift in *shifts.last().unwrap()..32 {
                 seen.clear();
                 for (lane, mix) in mixes.iter().copied().enumerate() {
-                    let new_mix = mix + (cols[i][lane] << shift);
+                    let new_mix = mix.wrapping_add(cols[i][lane] << shift);
                     new_mixes[lane] = new_mix;
 
                     let vec: Vec<u32> = iter::once(new_mix)

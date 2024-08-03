@@ -63,10 +63,23 @@ pub fn search(spec: &Spec) -> Option<Phf> {
         let x = ExprBuilder();
         tac.push_expr(x.add(x.reg(mix_reg), x.imm(rotation)))
     } else {
-        let start = Instant::now();
-        let compressor = Compressor::search(spec, &mixer)?;
-        eprintln!("compressor search took {} ms", start.elapsed().as_millis());
-        compressor.compile(&mut tac, &mut tables, mix_reg)
+        let mut bitwidth = mixer.mix_bits;
+        let mut values = mixer.mixes;
+        let mut reg = mix_reg;
+        while bitwidth > spec.min_hash_bits {
+            let start = Instant::now();
+            let (compressor, new_values) = Compressor::search(
+                &values,
+                bitwidth,
+                spec.min_hash_bits,
+                spec.min_hash_bits,
+            )?;
+            eprintln!("compressor search took {} ms", start.elapsed().as_millis());
+            bitwidth = compressor.bitwidth;
+            values = new_values;
+            reg = compressor.compile(&mut tac, &mut tables, reg);
+        }
+        reg
     };
 
     let x = ExprBuilder();

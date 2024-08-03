@@ -85,7 +85,7 @@ impl Selector {
     }
 
     pub fn search(spec: &Spec) -> Option<Vec<Selector>> {
-        let pos_limit = 32;
+        let pos_limit = 16;
 
         let mut searcher = SelectorSearcher::new(spec);
 

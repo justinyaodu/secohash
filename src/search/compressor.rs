@@ -1,74 +1,119 @@
-use std::{cmp, time::Instant};
+use std::{cmp, collections::HashSet, time::Instant};
 
 use crate::{
     ir::{ExprBuilder, Reg, Tables, Tac},
-    spec::Spec,
     util::{table_index_mask, table_size, to_u32, to_usize},
 };
 
-use super::{generational_bit_set::GenerationalBitSet, mixer::Mixer};
+use super::generational_bit_set::{BitSet, GenerationalBitSet};
 
 pub struct Compressor {
-    hash_bits: u32,
+    pub bitwidth: u32,
     base_shift: u32,
     offset_table: Vec<u32>,
 }
 
 impl Compressor {
-    pub fn search(spec: &Spec, mixer: &Mixer) -> Option<Compressor> {
-        let hash_bits = spec.min_hash_bits;
-        let hash_table_size = table_size(hash_bits);
-        let mut seen = GenerationalBitSet::new(hash_table_size);
+    pub fn search(
+        values: &[u32],
+        in_bitwidth: u32,
+        out_bitwidth: u32,
+        max_table_bits: u32,
+    ) -> Option<(Compressor, Vec<u32>)> {
+        let mut seen = GenerationalBitSet::new(table_size(max_table_bits));
 
-        for offset_index_bits in 1..=hash_bits {
-            let offset_table_size = table_size(offset_index_bits);
-            let offset_table_index_mask = table_index_mask(offset_index_bits);
+        let mut last_groups = None;
+        for offset_index_bits in 1..=max_table_bits {
+            let groups = Self::group_values(values, offset_index_bits);
 
-            let mut groups = vec![Vec::new(); offset_table_size];
-            for &mix in &mixer.mixes {
-                let offset_index = mix & offset_table_index_mask;
-                groups[to_usize(offset_index)].push(mix);
-            }
-
-            groups.retain(|group| !group.is_empty());
-            groups.sort_by_key(|group| cmp::Reverse(group.len()));
-
-            for base_shift in (mixer.mix_bits - hash_bits)..=offset_index_bits {
+            for base_shift in (in_bitwidth - out_bitwidth)..=offset_index_bits {
                 let start = Instant::now();
                 let opt = Self::find_offset_table(
                     &groups,
-                    hash_bits,
+                    out_bitwidth,
                     offset_index_bits,
                     base_shift,
                     &mut seen,
                 );
                 eprintln!("offset table search for offset_index_bits={offset_index_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
                 if let Some(offset_table) = opt {
-                    return Some(Compressor {
-                        hash_bits,
-                        base_shift,
-                        offset_table,
-                    });
+                    return Some((
+                        Compressor {
+                            bitwidth: out_bitwidth,
+                            base_shift,
+                            offset_table,
+                        },
+                        (1..(1 << out_bitwidth))
+                            .filter(|&i| seen.test(i))
+                            .collect(),
+                    ));
                 }
             }
+
+            last_groups = Some(groups);
         }
 
+        let mut seen = HashSet::with_capacity(values.len());
+        for target_bitwidth in out_bitwidth + 1..in_bitwidth {
+            let groups = last_groups.as_ref().unwrap();
+
+            let base_shift = in_bitwidth - target_bitwidth;
+            let start = Instant::now();
+            let opt = Self::find_offset_table(
+                groups,
+                target_bitwidth,
+                max_table_bits,
+                base_shift,
+                &mut seen,
+            );
+            eprintln!("offset table search for offset_index_bits={max_table_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
+            if let Some(offset_table) = opt {
+                return Some((
+                    Compressor {
+                        bitwidth: target_bitwidth,
+                        base_shift,
+                        offset_table,
+                    },
+                    (1..(1 << target_bitwidth))
+                        .filter(|&i| seen.test(i))
+                        .collect(),
+                ));
+            }
+        }
         None
     }
 
-    fn find_offset_table(
-        groups: &[Vec<u32>],
-        hash_bits: u32,
-        offset_index_bits: u32,
-        base_shift: u32,
-        seen: &mut GenerationalBitSet,
-    ) -> Option<Vec<u32>> {
-        let hash_table_size = table_size(hash_bits);
-        let hash_mask = table_index_mask(hash_bits);
+    fn group_values(values: &[u32], offset_index_bits: u32) -> Vec<Vec<u32>> {
         let offset_table_size = table_size(offset_index_bits);
         let offset_table_index_mask = table_index_mask(offset_index_bits);
 
-        seen.clear_all();
+        let mut groups = vec![Vec::new(); offset_table_size];
+        for &value in values {
+            let offset_index = value & offset_table_index_mask;
+            groups[to_usize(offset_index)].push(value);
+        }
+
+        groups.retain(|group| !group.is_empty());
+        groups.sort_by_key(|group| cmp::Reverse(group.len()));
+        groups
+    }
+
+    fn find_offset_table<B>(
+        groups: &[Vec<u32>],
+        out_bitwidth: u32,
+        offset_index_bits: u32,
+        base_shift: u32,
+        seen: &mut B,
+    ) -> Option<Vec<u32>>
+    where
+        B: BitSet,
+    {
+        let hash_table_size = table_size(out_bitwidth);
+        let hash_mask = table_index_mask(out_bitwidth);
+        let offset_table_size = table_size(offset_index_bits);
+        let offset_table_index_mask = table_index_mask(offset_index_bits);
+
+        seen.clear();
         seen.set(0);
         let mut full_before = 1;
 
@@ -85,9 +130,9 @@ impl Compressor {
                     Some(to_u32(full_before).wrapping_sub(group[0] >> base_shift) & hash_mask);
             } else {
                 'offset: for offset in 0..offset_size {
-                    for &mix in group {
-                        let hash = (mix >> base_shift).wrapping_add(offset) & hash_mask;
-                        if seen.test(to_usize(hash)) {
+                    for &value in group {
+                        let hash = (value >> base_shift).wrapping_add(offset) & hash_mask;
+                        if seen.test(hash) {
                             continue 'offset;
                         }
                     }
@@ -100,7 +145,7 @@ impl Compressor {
             if let Some(offset) = good_offset {
                 for &mix in group {
                     let hash = (mix >> base_shift).wrapping_add(offset) & hash_mask;
-                    seen.set(to_usize(hash));
+                    seen.set(hash);
                 }
                 let offset_table_index = group[0] & offset_table_index_mask;
                 offset_table[to_usize(offset_table_index)] = offset;

@@ -8,6 +8,8 @@ all: \
  0_to_fff.txt \
  000_to_fff.txt \
  bash_builtins.txt \
+ hex_64_16k.txt \
+ hex_7_16k.txt \
  nodejs_builtins.txt \
  python_builtins.txt
 
@@ -31,6 +33,12 @@ all: \
 
 bash_builtins.txt:
 	bash -c "compgen -bk | sort" > $@
+
+hex_64_16k.txt:
+	python -c 'import hashlib; [print(hashlib.sha256(i.to_bytes(4)).hexdigest()) for i in range(16000)]' > $@
+
+hex_7_16k.txt:
+	python -c 'import hashlib; [print(hashlib.sha256(i.to_bytes(4)).hexdigest()[:7]) for i in range(16000)]' > $@
 
 nodejs_builtins.txt:
 	node scripts/nodejs_builtins.js | sort > $@
