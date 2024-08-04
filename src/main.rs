@@ -9,7 +9,7 @@ mod util;
 use std::io;
 use std::io::BufRead;
 
-use backend::{Backend, CBackend};
+use backend::CBackend;
 use search::search;
 use spec::Spec;
 
@@ -27,6 +27,6 @@ fn main() {
     let spec = Spec::new(keys);
     let phf = search(&spec).expect("search failed");
 
-    let c_code = CBackend::new().emit(&spec, &phf);
+    let c_code = CBackend::new(spec, phf).emit();
     println!("{}", c_code);
 }

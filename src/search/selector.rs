@@ -77,8 +77,12 @@ impl Selector {
             Selector::Shrl(k) => x.str_get(x.shrl(x.str_len(), x.imm(k))),
             Selector::StrSum(k) => x.str_sum(k),
             Selector::Table(t) => {
-                let t = tables.push(t);
-                x.str_get(x.table_get(t, x.str_len()))
+                if t.iter().all(|&n| n == 0) {
+                    return Selector::Index(0).compile(tac, tables);
+                } else {
+                    let t = tables.push(t);
+                    x.str_get(x.table_get(t, x.str_len()))
+                }
             }
         };
         tac.push_expr(expr)

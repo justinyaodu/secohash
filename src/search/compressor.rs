@@ -43,9 +43,7 @@ impl Compressor {
                             base_shift,
                             offset_table,
                         },
-                        (1..(1 << out_bitwidth))
-                            .filter(|&i| seen.test(i))
-                            .collect(),
+                        (1..(1 << out_bitwidth)).filter(|&i| seen.test(i)).collect(),
                     ));
                 }
             }

@@ -68,12 +68,8 @@ pub fn search(spec: &Spec) -> Option<Phf> {
         let mut reg = mix_reg;
         while bitwidth > spec.min_hash_bits {
             let start = Instant::now();
-            let (compressor, new_values) = Compressor::search(
-                &values,
-                bitwidth,
-                spec.min_hash_bits,
-                spec.min_hash_bits,
-            )?;
+            let (compressor, new_values) =
+                Compressor::search(&values, bitwidth, spec.min_hash_bits, spec.min_hash_bits)?;
             eprintln!("compressor search took {} ms", start.elapsed().as_millis());
             bitwidth = compressor.bitwidth;
             values = new_values;

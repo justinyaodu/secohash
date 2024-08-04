@@ -162,8 +162,11 @@ impl fmt::Display for CExpr {
 pub struct CExprBuilder();
 
 impl CExprBuilder {
-    pub fn var(&self, name: String) -> CExpr {
-        CExpr::Var(name)
+    pub fn var<T>(&self, name: T) -> CExpr
+    where
+        T: Into<String>,
+    {
+        CExpr::Var(name.into())
     }
 
     pub fn imm(&self, n: u32) -> CExpr {
@@ -174,12 +177,18 @@ impl CExprBuilder {
         CExpr::Call(name, args)
     }
 
-    pub fn index(&self, name: String, e: CExpr) -> CExpr {
-        CExpr::Index(name, Box::new(e))
+    pub fn index<T>(&self, name: T, e: CExpr) -> CExpr
+    where
+        T: Into<String>,
+    {
+        CExpr::Index(name.into(), Box::new(e))
     }
 
-    pub fn cast(&self, t: String, e: CExpr) -> CExpr {
-        CExpr::Cast(t, Box::new(e))
+    pub fn cast<T>(&self, t: T, e: CExpr) -> CExpr
+    where
+        T: Into<String>,
+    {
+        CExpr::Cast(t.into(), Box::new(e))
     }
 
     pub fn bin_op(&self, op: CBinOp, a: CExpr, b: CExpr) -> CExpr {
@@ -225,7 +234,7 @@ mod test {
                 x.sub(x.imm(20), x.imm(0)),
                 x.shl(x.imm(30), x.imm(0)),
                 x.shr(x.imm(40), x.imm(0)),
-                x.shl(x.imm(50), x.and(x.var("i".into()), x.imm(0))),
+                x.shl(x.imm(50), x.and(x.var("i"), x.imm(0))),
             ],
         );
         let cleaned = x.call(
@@ -248,10 +257,7 @@ mod test {
     #[test]
     fn test_fmt_cast() {
         let x = CExprBuilder();
-        let e = x.index(
-            "key".into(),
-            x.sub(x.cast("uint32_t".into(), x.var("len".into())), x.imm(1)),
-        );
+        let e = x.index("key", x.sub(x.cast("uint32_t", x.var("len")), x.imm(1)));
         assert_eq!(format!("{e}"), "key[((uint32_t) len) - 1]");
     }
 }

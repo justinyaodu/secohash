@@ -1,13 +1,6 @@
 mod c_expr;
 mod c_str_formatter;
-
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt::Display,
-};
-
-use c_expr::{CBinOp, CExpr, CExprBuilder};
-use c_str_formatter::CStrFormatter;
+mod format_array;
 
 use crate::{
     ir::{constant_propagation, BinOp, Expr, Instr, Table, Tac, Var},
@@ -15,35 +8,37 @@ use crate::{
     spec::Spec,
     util::to_u32,
 };
+use c_expr::{CBinOp, CExpr, CExprBuilder};
+use c_str_formatter::CStrFormatter;
+use format_array::format_array;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-pub trait Backend {
-    fn emit(&self, spec: &Spec, phf: &Phf) -> String;
+pub struct CBackend {
+    spec: Spec,
+    phf: Phf,
 }
 
-pub struct CBackend();
-
 impl CBackend {
-    pub fn new() -> CBackend {
-        CBackend()
+    pub fn new(spec: Spec, phf: Phf) -> CBackend {
+        CBackend { spec, phf }
     }
 
-    fn expr_to_c_expr(phf: &Phf, expr: &Expr) -> CExpr {
+    fn expr_to_c_expr(&self, expr: &Expr) -> CExpr {
         let x = CExprBuilder();
         match *expr {
             Expr::Var(Var(i)) => x.var(format!("x{i}")),
             Expr::Reg(_) => panic!(),
             Expr::Imm(n) => x.imm(n),
-            Expr::StrGet(ref i) => x.index("key".into(), Self::expr_to_c_expr(phf, i.as_ref())),
-            Expr::StrLen => x.cast("uint32_t".into(), x.var("len".into())),
-            Expr::StrSum(mask) => x.call(
-                format!("str_sum_{mask}"),
-                vec![x.var("key".into()), x.var("len".into())],
-            ),
-            Expr::TableGet(Table(t), ref i) => {
-                x.index(format!("t{t}"), Self::expr_to_c_expr(phf, i.as_ref()))
+            Expr::StrGet(ref i) => x.index("key", self.expr_to_c_expr(i.as_ref())),
+            Expr::StrLen => x.cast("uint32_t", x.var("len")),
+            Expr::StrSum(mask) => {
+                x.call(format!("str_sum_{mask}"), vec![x.var("key"), x.var("len")])
             }
-            Expr::TableIndexMask(t) => x.imm(to_u32(phf.tables[t].len() - 1)),
-            Expr::HashMask => x.imm(to_u32(phf.key_table.len() - 1)),
+            Expr::TableGet(Table(t), ref i) => {
+                x.index(format!("t{t}"), self.expr_to_c_expr(i.as_ref()))
+            }
+            Expr::TableIndexMask(t) => x.imm(to_u32(self.phf.tables[t].len() - 1)),
+            Expr::HashMask => x.imm(to_u32(self.phf.key_table.len() - 1)),
             Expr::BinOp(op, ref a, ref b) => {
                 let op = match op {
                     BinOp::Add => CBinOp::Add,
@@ -52,8 +47,8 @@ impl CBackend {
                     BinOp::Shll => CBinOp::Shl,
                     BinOp::Shrl => CBinOp::Shr,
                 };
-                let a = Self::expr_to_c_expr(phf, a.as_ref());
-                let b = Self::expr_to_c_expr(phf, b.as_ref());
+                let a = self.expr_to_c_expr(a.as_ref());
+                let b = self.expr_to_c_expr(b.as_ref());
                 x.bin_op(op, a, b)
             }
         }
@@ -69,14 +64,14 @@ impl CBackend {
 
         let unroll = 4;
 
-        let body = if unroll > 1 {
-            let mut lines = Vec::new();
-
+        let mut body = Vec::new();
+        let unrolled = unroll > 1;
+        if unrolled {
             for lane in 0..unroll {
-                lines.push(format!("uint32_t sum_{lane} = 0;"));
+                body.push(format!("uint32_t sum_{lane} = 0;"));
             }
-            lines.push("size_t i = 0;".into());
-            lines.push(format!(
+            body.push("size_t i = 0;".into());
+            body.push(format!(
                 "for (; i + {} < len; i += {unroll}) {{",
                 unroll - 1
             ));
@@ -84,21 +79,21 @@ impl CBackend {
             let shift_later = unroll >= shift_stride;
 
             for lane in 0..unroll {
-                lines.push(format!(
+                body.push(format!(
                     "\tsum_{lane} += {};",
                     x.shl(
-                        x.index("key".into(), x.add(x.var("i".into()), x.imm(lane))),
+                        x.index("key", x.add(x.var("i"), x.imm(lane))),
                         if shift_later {
                             x.imm(0)
                         } else {
-                            x.and(x.add(x.var("i".into()), x.imm(lane)), x.imm(mask))
+                            x.and(x.add(x.var("i"), x.imm(lane)), x.imm(mask))
                         }
                     )
                     .cleaned()
                 ));
             }
 
-            lines.push("}".into());
+            body.push("}".into());
 
             let mut shifts_and_sums: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
             for lane in 0..unroll {
@@ -124,41 +119,24 @@ impl CBackend {
                 )
                 .cleaned();
 
-            let compute_sum = format!("uint32_t sum = {};", shifted_sum);
-            lines.push(compute_sum);
-
-            lines.extend([
-                "for (; i < len; i++) {".into(),
-                format!(
-                    "\tsum += {};",
-                    x.shl(
-                        x.index("key".into(), x.var("i".into())),
-                        x.and(x.var("i".into()), x.imm(mask))
-                    )
-                    .cleaned()
-                ),
-                "}".into(),
-            ]);
-
-            lines.push("return sum;".into());
-
-            lines
+            body.push(format!("uint32_t sum = {};", shifted_sum));
         } else {
-            vec![
-                "uint32_t sum = 0;".into(),
-                "for (size_t i = 0; i < len; i++) {".into(),
-                format!(
-                    "\tsum += {};",
-                    x.shl(
-                        x.index("key".into(), x.var("i".into())),
-                        x.and(x.var("i".into()), x.imm(mask))
-                    )
-                    .cleaned()
-                ),
-                "}".into(),
-                "return sum;".into(),
-            ]
+            body.push("uint32_t sum = 0;".into());
         };
+
+        body.extend([
+            format!(
+                "for ({}; i < len; i++) {{",
+                if unrolled { "" } else { "size_t i = 0" }
+            ),
+            format!(
+                "\tsum += {};",
+                x.shl(x.index("key", x.var("i")), x.and(x.var("i"), x.imm(mask)))
+                    .cleaned()
+            ),
+            "}".into(),
+            "return sum;".into(),
+        ]);
 
         let mut lines = Vec::new();
         lines.push("__attribute__((optimize(\"no-tree-vectorize\")))".into());
@@ -171,10 +149,13 @@ impl CBackend {
         lines.push("}".into());
         lines
     }
-}
 
-impl Backend for CBackend {
-    fn emit(&self, spec: &Spec, phf: &Phf) -> String {
+    pub fn emit(&self) -> String {
+        let tab_size = 4;
+
+        let spec = &self.spec;
+        let phf = &self.phf;
+
         let expr = phf.tac.unflatten_tree(phf.tac.last_reg(), &HashMap::new());
         let expr = constant_propagation(expr);
         let mut tac = Tac::new();
@@ -239,6 +220,25 @@ impl Backend for CBackend {
             if key_used { "" } else { unused_prefix },
         ));
 
+        for (i, table) in phf.tables.tables().iter().enumerate() {
+            let max = table.iter().copied().max().unwrap();
+            let mut table_type = "uint32_t";
+            if max <= u16::MAX.into() {
+                table_type = "uint16_t";
+            }
+            if max <= u8::MAX.into() {
+                table_type = "uint8_t";
+            }
+
+            let table_size = table.len();
+
+            let declaration = format!("static const {table_type} t{i}[{table_size}]");
+
+            for table_line in format_array(80 - tab_size, tab_size, &declaration, table) {
+                lines.push(format!("\t{table_line}"));
+            }
+        }
+
         {
             let min = spec.min_interpreted_key_len;
             let max = spec.max_interpreted_key_len;
@@ -254,32 +254,9 @@ impl Backend for CBackend {
             ]);
         }
 
-        for (i, table) in phf.tables.tables().iter().enumerate() {
-            let nums = table
-                .iter()
-                .map(|n| n.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let max = table.iter().copied().max().unwrap();
-            let mut table_type = "uint32_t";
-            if max <= u16::MAX.into() {
-                table_type = "uint16_t";
-            }
-            if max <= u8::MAX.into() {
-                table_type = "uint8_t";
-            }
-
-            let table_size = table.len();
-
-            lines.push(format!(
-                "\tstatic const {table_type} t{i}[{table_size}] = {{ {nums} }};",
-            ));
-        }
-
         let exprs = tac.unflatten_dag().0;
         for (i, expr) in exprs.iter().enumerate() {
-            let expr_str = Self::expr_to_c_expr(phf, expr).cleaned().to_string();
+            let expr_str = self.expr_to_c_expr(expr).cleaned().to_string();
             lines.push(format!(
                 "\t{} {expr_str};",
                 if i == exprs.len() - 1 {
@@ -302,6 +279,6 @@ impl Backend for CBackend {
             "}".into(),
         ]);
 
-        lines.join("\n").replace('\t', "    ")
+        lines.join("\n").replace('\t', &" ".repeat(tab_size))
     }
 }
