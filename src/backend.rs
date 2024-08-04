@@ -59,7 +59,7 @@ impl CBackend {
         }
     }
 
-    fn compile_str_sum(mask: u32) -> String {
+    fn compile_str_sum(mask: u32) -> Vec<String> {
         let x = CExprBuilder();
 
         let mut shift_stride = 1;
@@ -169,39 +169,7 @@ impl CBackend {
             lines.push(format!("\t{body_line}"));
         }
         lines.push("}".into());
-        lines.join("\n").replace('\t', "    ")
-    }
-}
-
-struct Declaration {
-    used: bool,
-    declaration: String,
-}
-
-impl Declaration {
-    fn new(used: bool, declaration: &str) -> Declaration {
-        Declaration {
-            used,
-            declaration: declaration.to_string(),
-        }
-    }
-
-    fn with_unused_attribute(&self) -> String {
-        format!(
-            "{}{}",
-            if self.used {
-                ""
-            } else {
-                "__attribute__((unused)) "
-            },
-            self.declaration
-        )
-    }
-}
-
-impl Display for Declaration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.declaration)
+        lines
     }
 }
 
@@ -214,8 +182,10 @@ impl Backend for CBackend {
         let (tac, _) = tac.local_value_numbering();
 
         let key_used = tac.instrs().iter().any(|i| matches!(&i, Instr::StrGet(_)));
-        let key = Declaration::new(key_used, "const char* key");
-        let len = Declaration::new(true, "size_t len");
+
+        let unused_prefix = "__attribute__((unused)) ";
+        let key_declaration = "const char* key";
+        let len_declaration = "size_t len";
 
         let mut lines: Vec<String> = vec![
             "#include <stddef.h>".into(),
@@ -260,14 +230,13 @@ impl Backend for CBackend {
         let mut str_sum_masks: Vec<u32> = str_sum_masks.into_iter().collect();
         str_sum_masks.sort();
         for mask in str_sum_masks {
-            lines.push(Self::compile_str_sum(mask));
+            lines.extend(Self::compile_str_sum(mask));
             lines.push("".into());
         }
 
         lines.push(format!(
-            "uint32_t hash({}, {}) {{",
-            key.with_unused_attribute(),
-            len.with_unused_attribute()
+            "uint32_t hash({}{key_declaration}, {len_declaration}) {{",
+            if key_used { "" } else { unused_prefix },
         ));
 
         {
@@ -320,19 +289,19 @@ impl Backend for CBackend {
                 }
             ))
         }
+        lines.push("}".into());
 
-        lines.push(format!(
-            "}}
+        lines.extend([
+            "".into(),
+            format!("uint32_t lookup({key_declaration}, {len_declaration}) {{"),
+            "\tuint32_t i = hash(key, len);".into(),
+            "\tif (len == entries[i].len && memcmp(key, entries[i].key, len) == 0) {".into(),
+            "\t\treturn entries[i].value;".into(),
+            "\t}".into(),
+            "\treturn -1;".into(),
+            "}".into(),
+        ]);
 
-uint32_t lookup({key}, {len}) {{
-    uint32_t i = hash(key, len);
-    if (len == entries[i].len && memcmp(key, entries[i].key, len) == 0) {{
-        return entries[i].value;
-    }}
-    return -1;
-}}"
-        ));
-
-        lines.join("\n")
+        lines.join("\n").replace('\t', "    ")
     }
 }
