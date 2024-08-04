@@ -50,13 +50,6 @@ impl Trace {
         }
         Trace(regs)
     }
-
-    pub fn width(&self) -> usize {
-        match self.0.first() {
-            Some(vec) => vec.len(),
-            None => 0,
-        }
-    }
 }
 
 impl Index<Reg> for Trace {

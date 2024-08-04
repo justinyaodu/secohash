@@ -20,6 +20,24 @@ impl CBinOp {
     }
 }
 
+impl fmt::Display for CBinOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use CBinOp::*;
+
+        write!(
+            f,
+            "{}",
+            match self {
+                Add => "+",
+                Sub => "-",
+                And => "&",
+                Shl => "<<",
+                Shr => ">>",
+            }
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CExpr {
     Var(String),
@@ -133,22 +151,8 @@ impl fmt::Display for CExpr {
                 e.write_with_parens(f, e.precedence() > 1)
             }
             BinOp(op, left, right) => {
-                use CBinOp::*;
-
                 left.write_with_parens(f, left.needs_parens_in_bin_op(self))?;
-
-                write!(
-                    f,
-                    " {} ",
-                    match op {
-                        Add => "+",
-                        Sub => "-",
-                        And => "&",
-                        Shl => "<<",
-                        Shr => ">>",
-                    }
-                )?;
-
+                write!(f, " {op} ")?;
                 right.write_with_parens(f, right.needs_parens_in_bin_op(self))
             }
         }

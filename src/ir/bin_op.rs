@@ -8,13 +8,6 @@ pub enum BinOp {
 }
 
 impl BinOp {
-    pub fn commutative(&self) -> bool {
-        match self {
-            BinOp::Add | BinOp::And => true,
-            BinOp::Sub | BinOp::Shll | BinOp::Shrl => false,
-        }
-    }
-
     pub fn eval(&self, a: u32, b: u32) -> u32 {
         match self {
             BinOp::Add => a.wrapping_add(b),

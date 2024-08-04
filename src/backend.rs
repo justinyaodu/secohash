@@ -82,9 +82,10 @@ impl CBackend {
             ));
 
             let shift_later = unroll >= shift_stride;
+
             for lane in 0..unroll {
                 lines.push(format!(
-                    "    sum_{lane} += {};",
+                    "\tsum_{lane} += {};",
                     x.shl(
                         x.index("key".into(), x.add(x.var("i".into()), x.imm(lane))),
                         if shift_later {
@@ -96,6 +97,7 @@ impl CBackend {
                     .cleaned()
                 ));
             }
+
             lines.push("}".into());
 
             let mut shifts_and_sums: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
@@ -125,26 +127,18 @@ impl CBackend {
             let compute_sum = format!("uint32_t sum = {};", shifted_sum);
             lines.push(compute_sum);
 
-            if unroll == 2 {
-                lines.extend([
-                    "if (i < len) {".into(),
-                    "    sum += key[i];".into(),
-                    "}".into(),
-                ]);
-            } else {
-                lines.extend([
-                    "for (; i < len; i++) {".into(),
-                    format!(
-                        "    sum += {};",
-                        x.shl(
-                            x.index("key".into(), x.var("i".into())),
-                            x.and(x.var("i".into()), x.imm(mask))
-                        )
-                        .cleaned()
-                    ),
-                    "}".into(),
-                ]);
-            }
+            lines.extend([
+                "for (; i < len; i++) {".into(),
+                format!(
+                    "\tsum += {};",
+                    x.shl(
+                        x.index("key".into(), x.var("i".into())),
+                        x.and(x.var("i".into()), x.imm(mask))
+                    )
+                    .cleaned()
+                ),
+                "}".into(),
+            ]);
 
             lines.push("return sum;".into());
 
@@ -154,7 +148,7 @@ impl CBackend {
                 "uint32_t sum = 0;".into(),
                 "for (size_t i = 0; i < len; i++) {".into(),
                 format!(
-                    "    sum += {};",
+                    "\tsum += {};",
                     x.shl(
                         x.index("key".into(), x.var("i".into())),
                         x.and(x.var("i".into()), x.imm(mask))
@@ -172,12 +166,13 @@ impl CBackend {
             "uint32_t str_sum_{mask}(const char* key, size_t len) {{"
         ));
         for body_line in body {
-            lines.push(format!("    {body_line}"));
+            lines.push(format!("\t{body_line}"));
         }
         lines.push("}".into());
-        lines.join("\n")
+        lines.join("\n").replace('\t', "    ")
     }
 }
+
 struct Declaration {
     used: bool,
     declaration: String,
@@ -222,23 +217,19 @@ impl Backend for CBackend {
         let key = Declaration::new(key_used, "const char* key");
         let len = Declaration::new(true, "size_t len");
 
-        let mut lines: Vec<String> = Vec::new();
-
-        lines.push(
-            "\
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
-
-struct entry {
-    char* key;
-    uint32_t len;
-    uint32_t value;
-};
-
-const struct entry entries[] = {"
-                .into(),
-        );
+        let mut lines: Vec<String> = vec![
+            "#include <stddef.h>".into(),
+            "#include <stdint.h>".into(),
+            "#include <string.h>".into(),
+            "".into(),
+            "struct entry {".into(),
+            "\tchar* key;".into(),
+            "\tuint32_t len;".into(),
+            "\tuint32_t value;".into(),
+            "};".into(),
+            "".into(),
+            "const struct entry entries[] = {".into(),
+        ];
 
         let str_formatter = CStrFormatter::new();
         for (i, key) in phf.key_table.iter().enumerate() {
@@ -254,7 +245,7 @@ const struct entry entries[] = {"
             };
 
             let entry = format!("{{ {string_literal}, {len}, {ordinal} }}");
-            lines.push(format!("    {entry},"));
+            lines.push(format!("\t{entry},"));
         }
 
         lines.push("};".into());
@@ -287,11 +278,11 @@ const struct entry entries[] = {"
             } else {
                 format!("len < {min} || len > {max}")
             };
-            lines.push(format!(
-                "    if ({condition}) {{
-        return 0;
-    }}"
-            ));
+            lines.extend([
+                format!("\tif ({condition}) {{"),
+                "\t\treturn 0;".into(),
+                "\t}".into(),
+            ]);
         }
 
         for (i, table) in phf.tables.tables().iter().enumerate() {
@@ -300,6 +291,7 @@ const struct entry entries[] = {"
                 .map(|n| n.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
+
             let max = table.iter().copied().max().unwrap();
             let mut table_type = "uint32_t";
             if max <= u16::MAX.into() {
@@ -308,16 +300,19 @@ const struct entry entries[] = {"
             if max <= u8::MAX.into() {
                 table_type = "uint8_t";
             }
+
+            let table_size = table.len();
+
             lines.push(format!(
-                "    static const {table_type} t{i}[] = {{ {nums} }};"
+                "\tstatic const {table_type} t{i}[{table_size}] = {{ {nums} }};",
             ));
         }
 
         let exprs = tac.unflatten_dag().0;
         for (i, expr) in exprs.iter().enumerate() {
-            let expr_str = Self::expr_to_c_expr(phf, expr).to_string();
+            let expr_str = Self::expr_to_c_expr(phf, expr).cleaned().to_string();
             lines.push(format!(
-                "    {} {expr_str};",
+                "\t{} {expr_str};",
                 if i == exprs.len() - 1 {
                     "return".into()
                 } else {
