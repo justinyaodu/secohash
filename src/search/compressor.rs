@@ -36,14 +36,14 @@ impl Compressor {
                     &mut seen,
                 );
                 eprintln!("offset table search for offset_index_bits={offset_index_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
-                if let Some(offset_table) = opt {
+                if let Some((offset_table, values)) = opt {
                     return Some((
                         Compressor {
                             bitwidth: out_bitwidth,
                             base_shift,
                             offset_table,
                         },
-                        (1..(1 << out_bitwidth)).filter(|&i| seen.test(i)).collect(),
+                        values,
                     ));
                 }
             }
@@ -65,16 +65,14 @@ impl Compressor {
                 &mut seen,
             );
             eprintln!("offset table search for offset_index_bits={max_table_bits} base_shift={base_shift} took {} us", start.elapsed().as_micros());
-            if let Some(offset_table) = opt {
+            if let Some((offset_table, values)) = opt {
                 return Some((
                     Compressor {
                         bitwidth: target_bitwidth,
                         base_shift,
                         offset_table,
                     },
-                    (1..(1 << target_bitwidth))
-                        .filter(|&i| seen.test(i))
-                        .collect(),
+                    values,
                 ));
             }
         }
@@ -102,7 +100,7 @@ impl Compressor {
         offset_index_bits: u32,
         base_shift: u32,
         seen: &mut B,
-    ) -> Option<Vec<u32>>
+    ) -> Option<(Vec<u32>, Vec<u32>)>
     where
         B: BitSet,
     {
@@ -117,6 +115,8 @@ impl Compressor {
 
         let mut offset_table = vec![0; offset_table_size];
         let offset_size = to_u32(hash_table_size);
+
+        let mut unmasked_hashes = Vec::new();
 
         for group in groups {
             let mut good_offset = None;
@@ -142,8 +142,9 @@ impl Compressor {
 
             if let Some(offset) = good_offset {
                 for &mix in group {
-                    let hash = (mix >> base_shift).wrapping_add(offset) & hash_mask;
-                    seen.set(hash);
+                    let unmasked_hash = (mix >> base_shift).wrapping_add(offset);
+                    seen.set(unmasked_hash & hash_mask);
+                    unmasked_hashes.push(unmasked_hash);
                 }
                 let offset_table_index = group[0] & offset_table_index_mask;
                 offset_table[to_usize(offset_table_index)] = offset;
@@ -152,7 +153,7 @@ impl Compressor {
             }
         }
 
-        Some(offset_table)
+        Some((offset_table, unmasked_hashes))
     }
 
     pub fn compile(self, tac: &mut Tac, tables: &mut Tables, mix_reg: Reg) -> Reg {
