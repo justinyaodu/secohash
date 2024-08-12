@@ -28,5 +28,5 @@ fn main() {
     let phf = search(&spec).expect("search failed");
 
     let c_code = CBackend::new(spec, phf).emit();
-    println!("{}", c_code);
+    print!("{}", c_code);
 }
